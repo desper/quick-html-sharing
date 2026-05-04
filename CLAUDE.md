@@ -14,17 +14,36 @@ Indie SaaS — instant HTML sharing for vibe coders. Unguessable URLs + viewer a
 
 ## Subdomain layout (security-critical)
 
-- `app.<domain>` — dashboard (login-less, sender uses URL-fragment edit tokens)
-- `s.<domain>` — uploaded HTML rendered here, isolated from dashboard cookies
+Two distinct origins, regardless of how they're hosted:
+
+- **Dashboard origin** — Astro static site (sender uses URL-fragment edit tokens)
+- **Share origin** — uploaded HTML rendered here, isolated from dashboard cookies
 
 User-uploaded HTML must NEVER be served from the same origin as the dashboard. This is the core security property — if you change it, phishing pages can attack dashboard cookies.
 
-## Domain placeholder
+### Free deploy mapping (current)
 
-Search the repo for `<TBD-DOMAIN>` before deploying. Locations:
-- `apps/worker/wrangler.toml` — routes
-- `apps/web/astro.config.mjs` — site URL
-- README.md
+- Dashboard: `qhs.pages.dev` (Cloudflare Pages, static Astro build)
+- API worker: `qhs-api.<acct>.workers.dev` (`wrangler deploy --env api`)
+- Share worker: `qhs-share.<acct>.workers.dev` (`wrangler deploy --env share`)
+
+The api and share workers run the **same source** but separate deploys give them
+distinct origins, which is what the dispatch logic in `src/index.ts` keys on.
+
+### Production mapping (after buying a domain)
+
+Collapse to one worker behind two routes:
+- `app.<domain>/api/*` → dashboard host
+- `s.<domain>/*` → share host
+
+## Placeholders to replace before deploy
+
+- `<TBD-CF-ACCOUNT>` — your Cloudflare workers.dev subdomain. Files:
+  - `apps/worker/wrangler.toml` (vars in env.api + env.share)
+  - `apps/web/.env.example` → copy to `.env.production`
+- `<TBD-D1-DATABASE-ID>` — output of `wrangler d1 create`. Files:
+  - `apps/worker/wrangler.toml` (both env blocks)
+- `<TBD-DOMAIN>` (only when you buy a real domain): grep all repo files
 
 ## Architecture decisions (DO NOT change without re-running /plan-eng-review)
 

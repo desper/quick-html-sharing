@@ -5,13 +5,15 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --env api",
+    "deploy:api": "wrangler deploy --env api",
+    "deploy:share": "wrangler deploy --env share",
+    "deploy": "bun run deploy:api && bun run deploy:share",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "db:apply:local": "wrangler d1 execute quick-html-sharing --local --file=db/schema.sql",
-    "db:apply:remote": "wrangler d1 execute quick-html-sharing --remote --file=db/schema.sql"
+    "db:apply:local": "wrangler d1 execute quick-html-sharing --local --env api --file=db/schema.sql",
+    "db:apply:remote": "wrangler d1 execute quick-html-sharing --remote --env api --file=db/schema.sql"
   },
   "dependencies": {
     "hono": "^4.6.14",

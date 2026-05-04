@@ -61,10 +61,8 @@ import Base from '../layouts/Base.astro';
           : 'never';
         createdAt.textContent = new Date(s.createdAt).toLocaleString();
         deletedBanner.hidden = !s.deleted;
-        // Share host is configured at build/deploy time; in dev we don't know
-        // it from the dashboard. The watermark / share index pages link out to
-        // the share URL directly; here we just show stats by slug.
-        openShare.href = `/__share-redirect?slug=${encodeURIComponent(slug)}`;
+        const shareBase = (import.meta.env.PUBLIC_SHARE_BASE as string | undefined) ?? '';
+        openShare.href = shareBase ? `${shareBase}/${slug}` : `/${slug}`;
         openShare.textContent = `Open share (${slug}) →`;
         panel.hidden = false;
       } catch (e) {

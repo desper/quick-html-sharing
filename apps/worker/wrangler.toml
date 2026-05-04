@@ -1,53 +1,54 @@
+# Default config — not for plain `wrangler deploy`. Always deploy with one of:
+#   wrangler deploy --env api    → qhs-api.<your-account>.workers.dev
+#   wrangler deploy --env share  → qhs-share.<your-account>.workers.dev
+#
+# Two workers run the SAME code. Each receives its own *.workers.dev origin.
+# That gives us the subdomain isolation property the architecture depends on,
+# without needing a custom domain. Both bind to the same D1 + R2.
 name = "quick-html-sharing"
 main = "src/index.ts"
-compatibility_date = "2026-04-01"
+compatibility_date = "2024-12-30"
 compatibility_flags = ["nodejs_compat"]
-
-# Workers Paid plan recommended ($5/mo) — free tier 10ms CPU is too tight given
-# R2 read + D1 INSERT on every share view.
-
-# ----------------------------------------------------------------------------
-# Routes
-# ----------------------------------------------------------------------------
-# The Worker handles BOTH:
-#   1. dashboard API on  app.<TBD-DOMAIN>/api/*
-#   2. share rendering on s.<TBD-DOMAIN>/* (public HTML)
-#
-# Splitting these on separate hostnames is what isolates uploaded HTML
-# from dashboard cookies. Do NOT collapse them onto the same origin.
-# ----------------------------------------------------------------------------
-# Uncomment and replace <TBD-DOMAIN> after registering domain + adding zone to CF.
-# routes = [
-#   { pattern = "app.<TBD-DOMAIN>/api/*", zone_name = "<TBD-DOMAIN>" },
-#   { pattern = "s.<TBD-DOMAIN>/*",       zone_name = "<TBD-DOMAIN>" },
-# ]
-
-# ----------------------------------------------------------------------------
-# Bindings
-# ----------------------------------------------------------------------------
-
-[[d1_databases]]
-binding = "DB"
-database_name = "quick-html-sharing"
-# Replace after running: wrangler d1 create quick-html-sharing
-database_id = "<TBD-D1-DATABASE-ID>"
-
-[[r2_buckets]]
-binding = "HTML_BUCKET"
-bucket_name = "quick-html-sharing"
-
-[vars]
-# Hostnames the Worker uses to build share URLs in API responses.
-# Update after registering domain.
-DASHBOARD_HOST = "app.<TBD-DOMAIN>"
-SHARE_HOST = "s.<TBD-DOMAIN>"
-# Salt for IP hashing. Changes break dedupe. Set per-environment via secret in prod:
-#   wrangler secret put IP_HASH_SALT
-IP_HASH_SALT = "dev-only-change-me"
 
 [observability]
 enabled = true
 
-# Cleanup job runs every 10 min, sweeps stale 'pending' uploads.
-[triggers]
+# ----------------------------------------------------------------------------
+# After registering a real domain, replace the [env.api]/[env.share] blocks
+# below with a single production block + `routes = [...]`. Until then, free
+# .workers.dev origins are fine for dogfood with friends.
+# ----------------------------------------------------------------------------
+
+# === API worker — dashboard host, handles /api/* ============================
+[env.api]
+name = "qhs-api"
+vars = { DASHBOARD_HOST = "qhs.pages.dev", SHARE_HOST = "qhs-share.<TBD-CF-ACCOUNT>.workers.dev", IP_HASH_SALT = "dev-only-change-me" }
+
+[[env.api.d1_databases]]
+binding = "DB"
+database_name = "quick-html-sharing"
+# Replace after `wrangler d1 create quick-html-sharing`.
+database_id = "<TBD-D1-DATABASE-ID>"
+
+[[env.api.r2_buckets]]
+binding = "HTML_BUCKET"
+bucket_name = "quick-html-sharing"
+
+# Cleanup cron only runs on api env — running it on both wastes invocations
+# and can race when sweeping pending rows.
+[env.api.triggers]
 crons = ["*/10 * * * *"]
+
+# === Share worker — share host, handles /:slug ==============================
+[env.share]
+name = "qhs-share"
+vars = { DASHBOARD_HOST = "qhs.pages.dev", SHARE_HOST = "qhs-share.<TBD-CF-ACCOUNT>.workers.dev", IP_HASH_SALT = "dev-only-change-me" }
+
+[[env.share.d1_databases]]
+binding = "DB"
+database_name = "quick-html-sharing"
+database_id = "<TBD-D1-DATABASE-ID>"
+
+[[env.share.r2_buckets]]
+binding = "HTML_BUCKET"
+bucket_name = "quick-html-sharing"
