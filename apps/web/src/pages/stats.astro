@@ -1,0 +1,78 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Stats — quick-html-sharing">
+  <h1>Stats</h1>
+  <p class="lede" id="slug-line">Loading…</p>
+
+  <section class="panel" id="stats-panel" hidden>
+    <div class="row" style="gap: 32px">
+      <div>
+        <div class="muted">Views</div>
+        <div style="font-size: 32px; font-weight: 700" id="views">—</div>
+      </div>
+      <div>
+        <div class="muted">Last viewed</div>
+        <div style="font-size: 16px" id="last-viewed">—</div>
+      </div>
+      <div>
+        <div class="muted">Created</div>
+        <div style="font-size: 16px" id="created-at">—</div>
+      </div>
+    </div>
+    <p class="muted" id="deleted-banner" hidden style="color: var(--danger)">
+      This share is deleted.
+    </p>
+    <div class="row" style="margin-top: 24px">
+      <a id="open-share" href="#" target="_blank" rel="noopener">Open share &rarr;</a>
+      <a href="/">&larr; Back</a>
+    </div>
+  </section>
+
+  <p class="error" id="error-msg" hidden></p>
+
+  <script>
+    import { getStats, ApiError } from '../lib/api';
+
+    const params = new URLSearchParams(location.search);
+    const slug = params.get('slug') ?? '';
+    const slugLine = document.getElementById('slug-line') as HTMLElement;
+    const panel = document.getElementById('stats-panel') as HTMLElement;
+    const errorMsg = document.getElementById('error-msg') as HTMLElement;
+    const views = document.getElementById('views') as HTMLElement;
+    const lastViewed = document.getElementById('last-viewed') as HTMLElement;
+    const createdAt = document.getElementById('created-at') as HTMLElement;
+    const openShare = document.getElementById('open-share') as HTMLAnchorElement;
+    const deletedBanner = document.getElementById('deleted-banner') as HTMLElement;
+
+    async function load() {
+      if (!slug) {
+        errorMsg.textContent = 'Missing slug.';
+        errorMsg.hidden = false;
+        return;
+      }
+      slugLine.textContent = slug;
+      try {
+        const s = await getStats(slug);
+        views.textContent = String(s.views);
+        lastViewed.textContent = s.lastViewedAt
+          ? new Date(s.lastViewedAt).toLocaleString()
+          : 'never';
+        createdAt.textContent = new Date(s.createdAt).toLocaleString();
+        deletedBanner.hidden = !s.deleted;
+        // Share host is configured at build/deploy time; in dev we don't know
+        // it from the dashboard. The watermark / share index pages link out to
+        // the share URL directly; here we just show stats by slug.
+        openShare.href = `/__share-redirect?slug=${encodeURIComponent(slug)}`;
+        openShare.textContent = `Open share (${slug}) →`;
+        panel.hidden = false;
+      } catch (e) {
+        errorMsg.textContent =
+          e instanceof ApiError ? `${e.status}: ${e.message}` : 'Failed to load stats.';
+        errorMsg.hidden = false;
+      }
+    }
+    void load();
+  </script>
+</Base>

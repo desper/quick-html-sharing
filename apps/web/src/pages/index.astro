@@ -1,0 +1,211 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="quick-html-sharing">
+  <h1>quick-html-sharing</h1>
+  <p class="lede">
+    Paste HTML. Get a URL. Share it. See who saw it.
+  </p>
+
+  <section class="panel dropzone" id="dropzone">
+    <textarea
+      id="html-input"
+      placeholder="<!-- paste your HTML here, or drop a .html file anywhere on the page -->"
+    ></textarea>
+    <div class="row" style="margin-top: 12px; justify-content: space-between">
+      <span class="muted" id="size-indicator">0 bytes</span>
+      <div class="row">
+        <button class="secondary" id="clear-btn" type="button">Clear</button>
+        <button id="share-btn" type="button">Share</button>
+      </div>
+    </div>
+    <p class="error" id="error-msg" hidden></p>
+  </section>
+
+  <section class="panel" id="result-panel" hidden>
+    <h2 style="margin-top:0;font-size:18px">Your share is live</h2>
+    <p class="muted">
+      Save this edit URL — it's the only way to update or delete this share later.
+      The token never reaches our servers.
+    </p>
+    <label class="muted" for="share-url">Share URL (give this out)</label>
+    <div class="url-box">
+      <input id="share-url" type="text" readonly />
+      <button class="secondary" data-copy="#share-url" type="button">Copy</button>
+    </div>
+    <label class="muted" for="edit-url" style="margin-top: 12px; display: block">
+      Edit URL (keep private)
+    </label>
+    <div class="url-box">
+      <input id="edit-url" type="text" readonly />
+      <button class="secondary" data-copy="#edit-url" type="button">Copy</button>
+    </div>
+    <div class="row" style="margin-top: 16px">
+      <a id="open-share" href="#" target="_blank" rel="noopener">Open share &rarr;</a>
+      <a id="open-stats" href="#">View stats &rarr;</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top:0;font-size:18px">Recent on this device</h2>
+    <p class="muted" id="recent-empty">
+      Nothing yet. Anything you upload from this browser shows up here.
+    </p>
+    <ul class="recent" id="recent-list"></ul>
+  </section>
+
+  <script>
+    import { uploadHtml, ApiError } from '../lib/api';
+    import { loadRecent, rememberShare, forgetShare } from '../lib/recent';
+    import { MAX_HTML_BYTES } from '@qhs/shared';
+
+    const $ = <T extends Element = HTMLElement>(sel: string) =>
+      document.querySelector(sel) as T;
+    const input = $('#html-input') as HTMLTextAreaElement;
+    const size = $('#size-indicator');
+    const shareBtn = $('#share-btn') as HTMLButtonElement;
+    const clearBtn = $('#clear-btn') as HTMLButtonElement;
+    const errorMsg = $('#error-msg');
+    const resultPanel = $('#result-panel');
+    const shareUrl = $('#share-url') as HTMLInputElement;
+    const editUrl = $('#edit-url') as HTMLInputElement;
+    const openShare = $('#open-share') as HTMLAnchorElement;
+    const openStats = $('#open-stats') as HTMLAnchorElement;
+    const recentList = $('#recent-list') as HTMLUListElement;
+    const recentEmpty = $('#recent-empty');
+    const dropzone = $('#dropzone');
+
+    function fmtBytes(n: number) {
+      if (n < 1024) return `${n} bytes`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / 1024 / 1024).toFixed(2)} MB`;
+    }
+
+    function updateSize() {
+      const bytes = new TextEncoder().encode(input.value).byteLength;
+      const over = bytes > MAX_HTML_BYTES;
+      size.textContent = `${fmtBytes(bytes)} / ${fmtBytes(MAX_HTML_BYTES)}${over ? ' — too large' : ''}`;
+      size.style.color = over ? 'var(--danger)' : 'var(--fg-mute)';
+      shareBtn.disabled = bytes === 0 || over;
+    }
+
+    input.addEventListener('input', updateSize);
+    updateSize();
+
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      errorMsg.hidden = true;
+      resultPanel.hidden = true;
+      updateSize();
+      input.focus();
+    });
+
+    shareBtn.addEventListener('click', async () => {
+      errorMsg.hidden = true;
+      shareBtn.disabled = true;
+      const original = shareBtn.textContent ?? 'Share';
+      shareBtn.textContent = 'Sharing…';
+      try {
+        const r = await uploadHtml(input.value);
+        shareUrl.value = r.shareUrl;
+        editUrl.value = r.editUrl;
+        openShare.href = r.shareUrl;
+        openStats.href = `/stats?slug=${encodeURIComponent(r.slug)}`;
+        rememberShare({ slug: r.slug, shareUrl: r.shareUrl, editUrl: r.editUrl });
+        renderRecent();
+        resultPanel.hidden = false;
+        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) {
+        errorMsg.textContent = e instanceof ApiError ? e.message : 'Upload failed.';
+        errorMsg.hidden = false;
+      } finally {
+        shareBtn.textContent = original;
+        updateSize();
+      }
+    });
+
+    document.addEventListener('click', async (ev) => {
+      const target = ev.target as HTMLElement;
+      const copySel = target.getAttribute?.('data-copy');
+      if (!copySel) return;
+      const el = document.querySelector(copySel) as HTMLInputElement;
+      if (!el) return;
+      try {
+        await navigator.clipboard.writeText(el.value);
+        const orig = target.textContent;
+        target.textContent = 'Copied';
+        setTimeout(() => (target.textContent = orig), 1200);
+      } catch {
+        el.select();
+      }
+    });
+
+    // Drag-and-drop a .html file anywhere on the page.
+    let dragDepth = 0;
+    document.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragDepth++;
+      dropzone.classList.add('over');
+    });
+    document.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) dropzone.classList.remove('over');
+    });
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    document.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dragDepth = 0;
+      dropzone.classList.remove('over');
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (!/\.html?$/i.test(file.name) && !file.type.includes('html')) {
+        errorMsg.textContent = 'Drop a .html file.';
+        errorMsg.hidden = false;
+        return;
+      }
+      input.value = await file.text();
+      updateSize();
+    });
+
+    function renderRecent() {
+      const items = loadRecent();
+      recentList.innerHTML = '';
+      recentEmpty.hidden = items.length > 0;
+      for (const item of items) {
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <div>
+            <a class="slug" href="${item.shareUrl}" target="_blank" rel="noopener">${item.slug}</a>
+            <div class="meta">${new Date(item.createdAt).toLocaleString()}</div>
+          </div>
+          <div class="row">
+            <a href="/stats?slug=${encodeURIComponent(item.slug)}" class="muted">stats</a>
+            <button class="secondary" data-edit="${item.editUrl}" type="button">edit</button>
+            <button class="secondary" data-forget="${item.slug}" type="button">forget</button>
+          </div>
+        `;
+        recentList.appendChild(li);
+      }
+    }
+
+    recentList.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      const editU = target.getAttribute('data-edit');
+      const forgetSlug = target.getAttribute('data-forget');
+      if (editU) {
+        // editU is the edit URL like `https://s.example.com/abc123#edit=tok`.
+        // Extract slug + token and navigate to our /edit page.
+        const u = new URL(editU);
+        const editSlug = u.pathname.replace(/^\//, '');
+        window.location.href = `/edit?slug=${encodeURIComponent(editSlug)}${u.hash}`;
+      } else if (forgetSlug) {
+        forgetShare(forgetSlug);
+        renderRecent();
+      }
+    });
+
+    renderRecent();
+  </script>
+</Base>

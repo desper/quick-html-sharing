@@ -1,0 +1,53 @@
+name = "quick-html-sharing"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers Paid plan recommended ($5/mo) — free tier 10ms CPU is too tight given
+# R2 read + D1 INSERT on every share view.
+
+# ----------------------------------------------------------------------------
+# Routes
+# ----------------------------------------------------------------------------
+# The Worker handles BOTH:
+#   1. dashboard API on  app.<TBD-DOMAIN>/api/*
+#   2. share rendering on s.<TBD-DOMAIN>/* (public HTML)
+#
+# Splitting these on separate hostnames is what isolates uploaded HTML
+# from dashboard cookies. Do NOT collapse them onto the same origin.
+# ----------------------------------------------------------------------------
+# Uncomment and replace <TBD-DOMAIN> after registering domain + adding zone to CF.
+# routes = [
+#   { pattern = "app.<TBD-DOMAIN>/api/*", zone_name = "<TBD-DOMAIN>" },
+#   { pattern = "s.<TBD-DOMAIN>/*",       zone_name = "<TBD-DOMAIN>" },
+# ]
+
+# ----------------------------------------------------------------------------
+# Bindings
+# ----------------------------------------------------------------------------
+
+[[d1_databases]]
+binding = "DB"
+database_name = "quick-html-sharing"
+# Replace after running: wrangler d1 create quick-html-sharing
+database_id = "<TBD-D1-DATABASE-ID>"
+
+[[r2_buckets]]
+binding = "HTML_BUCKET"
+bucket_name = "quick-html-sharing"
+
+[vars]
+# Hostnames the Worker uses to build share URLs in API responses.
+# Update after registering domain.
+DASHBOARD_HOST = "app.<TBD-DOMAIN>"
+SHARE_HOST = "s.<TBD-DOMAIN>"
+# Salt for IP hashing. Changes break dedupe. Set per-environment via secret in prod:
+#   wrangler secret put IP_HASH_SALT
+IP_HASH_SALT = "dev-only-change-me"
+
+[observability]
+enabled = true
+
+# Cleanup job runs every 10 min, sweeps stale 'pending' uploads.
+[triggers]
+crons = ["*/10 * * * *"]

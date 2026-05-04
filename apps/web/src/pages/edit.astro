@@ -1,0 +1,106 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Edit — quick-html-sharing">
+  <h1>Edit share</h1>
+  <p class="lede" id="slug-line">Loading…</p>
+
+  <section class="panel">
+    <p class="muted">
+      Paste the updated HTML. Your edit token stays in the URL fragment and never
+      reaches our servers.
+    </p>
+    <textarea id="html-input" placeholder="<!-- paste replacement HTML here -->"
+    ></textarea>
+    <div class="row" style="margin-top: 12px; justify-content: space-between">
+      <span class="muted" id="size-indicator">0 bytes</span>
+      <div class="row">
+        <button class="danger" id="delete-btn" type="button">Delete share</button>
+        <button id="save-btn" type="button">Save changes</button>
+      </div>
+    </div>
+    <p class="error" id="error-msg" hidden></p>
+    <p class="success" id="success-msg" hidden></p>
+  </section>
+
+  <p class="muted" style="margin-top: 24px"><a href="/">&larr; Back</a></p>
+
+  <script>
+    import { editHtml, deleteShare, ApiError } from '../lib/api';
+    import { forgetShare } from '../lib/recent';
+    import { MAX_HTML_BYTES } from '@qhs/shared';
+
+    const params = new URLSearchParams(location.search);
+    const slug = params.get('slug') ?? '';
+    const fragment = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const editToken = fragment.get('edit') ?? '';
+
+    const slugLine = document.getElementById('slug-line') as HTMLElement;
+    const input = document.getElementById('html-input') as HTMLTextAreaElement;
+    const size = document.getElementById('size-indicator') as HTMLElement;
+    const saveBtn = document.getElementById('save-btn') as HTMLButtonElement;
+    const deleteBtn = document.getElementById('delete-btn') as HTMLButtonElement;
+    const errorMsg = document.getElementById('error-msg') as HTMLElement;
+    const successMsg = document.getElementById('success-msg') as HTMLElement;
+
+    if (!slug || !editToken) {
+      slugLine.textContent = 'Missing slug or edit token in URL.';
+      saveBtn.disabled = true;
+      deleteBtn.disabled = true;
+    } else {
+      slugLine.textContent = slug;
+    }
+
+    function fmtBytes(n: number) {
+      if (n < 1024) return `${n} bytes`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / 1024 / 1024).toFixed(2)} MB`;
+    }
+    function updateSize() {
+      const bytes = new TextEncoder().encode(input.value).byteLength;
+      const over = bytes > MAX_HTML_BYTES;
+      size.textContent = `${fmtBytes(bytes)} / ${fmtBytes(MAX_HTML_BYTES)}${over ? ' — too large' : ''}`;
+      size.style.color = over ? 'var(--danger)' : 'var(--fg-mute)';
+      saveBtn.disabled = bytes === 0 || over || !slug || !editToken;
+    }
+    input.addEventListener('input', updateSize);
+    updateSize();
+
+    saveBtn.addEventListener('click', async () => {
+      errorMsg.hidden = true;
+      successMsg.hidden = true;
+      saveBtn.disabled = true;
+      const orig = saveBtn.textContent ?? 'Save changes';
+      saveBtn.textContent = 'Saving…';
+      try {
+        await editHtml(slug, input.value, editToken);
+        successMsg.textContent = 'Saved. Recipients will see the new version on next view.';
+        successMsg.hidden = false;
+      } catch (e) {
+        errorMsg.textContent =
+          e instanceof ApiError ? `${e.status}: ${e.message}` : 'Save failed.';
+        errorMsg.hidden = false;
+      } finally {
+        saveBtn.textContent = orig;
+        updateSize();
+      }
+    });
+
+    deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete share ${slug}? Recipients will see a 404.`)) return;
+      errorMsg.hidden = true;
+      try {
+        await deleteShare(slug, editToken);
+        forgetShare(slug);
+        successMsg.textContent = 'Deleted. Going home…';
+        successMsg.hidden = false;
+        setTimeout(() => (location.href = '/'), 800);
+      } catch (e) {
+        errorMsg.textContent =
+          e instanceof ApiError ? `${e.status}: ${e.message}` : 'Delete failed.';
+        errorMsg.hidden = false;
+      }
+    });
+  </script>
+</Base>

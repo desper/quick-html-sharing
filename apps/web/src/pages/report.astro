@@ -1,0 +1,84 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Report content — quick-html-sharing">
+  <h1>Report content</h1>
+  <p class="lede">
+    Reporting share <code id="slug-code"></code>
+  </p>
+
+  <section class="panel">
+    <p class="muted">
+      We host user-uploaded HTML and we don't review it before publishing. If
+      this share is phishing, malware, or otherwise abusive, tell us and we'll
+      take it down. Reports from the same IP are deduplicated.
+    </p>
+    <label class="muted" for="reason">What's wrong with this content?</label>
+    <textarea
+      id="reason"
+      placeholder="e.g. impersonates a bank login page, distributes malware, …"
+      style="min-height: 140px"></textarea>
+    <label class="muted" for="email" style="margin-top: 12px; display: block">
+      Email (optional, for follow-up)
+    </label>
+    <input
+      type="email"
+      id="email"
+      style="width:100%;padding:10px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);margin-top:4px"
+    />
+    <div class="row" style="margin-top: 12px; justify-content: flex-end">
+      <button id="submit-btn" type="button">Submit report</button>
+    </div>
+    <p class="error" id="error-msg" hidden></p>
+    <p class="success" id="success-msg" hidden></p>
+  </section>
+
+  <p class="muted" style="margin-top: 24px"><a href="/">&larr; Home</a></p>
+
+  <script>
+    import { reportShare, ApiError } from '../lib/api';
+
+    const params = new URLSearchParams(location.search);
+    const slug = params.get('slug') ?? '';
+    const slugCode = document.getElementById('slug-code') as HTMLElement;
+    slugCode.textContent = slug || '(no slug provided)';
+
+    const reason = document.getElementById('reason') as HTMLTextAreaElement;
+    const email = document.getElementById('email') as HTMLInputElement;
+    const btn = document.getElementById('submit-btn') as HTMLButtonElement;
+    const errorMsg = document.getElementById('error-msg') as HTMLElement;
+    const successMsg = document.getElementById('success-msg') as HTMLElement;
+
+    if (!slug) {
+      btn.disabled = true;
+    }
+
+    btn.addEventListener('click', async () => {
+      errorMsg.hidden = true;
+      successMsg.hidden = true;
+      if (reason.value.trim().length === 0) {
+        errorMsg.textContent = 'Tell us what is wrong.';
+        errorMsg.hidden = false;
+        return;
+      }
+      btn.disabled = true;
+      const orig = btn.textContent ?? 'Submit report';
+      btn.textContent = 'Submitting…';
+      try {
+        const r = await reportShare(slug, reason.value.trim(), email.value || undefined);
+        successMsg.textContent = r.deduped
+          ? 'Already on it — your earlier report is in our queue.'
+          : 'Thanks. We received your report.';
+        successMsg.hidden = false;
+      } catch (e) {
+        errorMsg.textContent =
+          e instanceof ApiError ? e.message : 'Could not submit report.';
+        errorMsg.hidden = false;
+      } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
+      }
+    });
+  </script>
+</Base>
