@@ -22,13 +22,13 @@ enabled = true
 # === API worker — dashboard host, handles /api/* ============================
 [env.api]
 name = "qhs-api"
-vars = { DASHBOARD_HOST = "qhs.pages.dev", SHARE_HOST = "qhs-share.<TBD-CF-ACCOUNT>.workers.dev", IP_HASH_SALT = "dev-only-change-me" }
+workers_dev = true
+vars = { DASHBOARD_HOST = "qhs-6ft.pages.dev", SHARE_HOST = "qhs-share.desperli.workers.dev" }
 
 [[env.api.d1_databases]]
 binding = "DB"
 database_name = "quick-html-sharing"
-# Replace after `wrangler d1 create quick-html-sharing`.
-database_id = "<TBD-D1-DATABASE-ID>"
+database_id = "abc8df6d-3fd3-4331-84a1-5974299d6666"
 
 [[env.api.r2_buckets]]
 binding = "HTML_BUCKET"
@@ -42,12 +42,13 @@ crons = ["*/10 * * * *"]
 # === Share worker — share host, handles /:slug ==============================
 [env.share]
 name = "qhs-share"
-vars = { DASHBOARD_HOST = "qhs.pages.dev", SHARE_HOST = "qhs-share.<TBD-CF-ACCOUNT>.workers.dev", IP_HASH_SALT = "dev-only-change-me" }
+workers_dev = true
+vars = { DASHBOARD_HOST = "qhs-6ft.pages.dev", SHARE_HOST = "qhs-share.desperli.workers.dev" }
 
 [[env.share.d1_databases]]
 binding = "DB"
 database_name = "quick-html-sharing"
-database_id = "<TBD-D1-DATABASE-ID>"
+database_id = "abc8df6d-3fd3-4331-84a1-5974299d6666"
 
 [[env.share.r2_buckets]]
 binding = "HTML_BUCKET"
