@@ -1,0 +1,12 @@
+{
+  "name": "@qhs/skill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code skill for quick-html-sharing.",
+  "type": "module",
+  "files": [
+    "SKILL.md",
+    "scripts/**/*",
+    "README.md"
+  ]
+}

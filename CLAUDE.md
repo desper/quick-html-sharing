@@ -21,11 +21,16 @@ Two distinct origins, regardless of how they're hosted:
 
 User-uploaded HTML must NEVER be served from the same origin as the dashboard. This is the core security property — if you change it, phishing pages can attack dashboard cookies.
 
-### Free deploy mapping (current)
+### Free deploy mapping (LIVE since 2026-05-28)
 
-- Dashboard: `qhs.pages.dev` (Cloudflare Pages, static Astro build)
-- API worker: `qhs-api.<acct>.workers.dev` (`wrangler deploy --env api`)
-- Share worker: `qhs-share.<acct>.workers.dev` (`wrangler deploy --env share`)
+- Dashboard: **https://qhs-6ft.pages.dev** (Cloudflare Pages, static Astro build)
+  - The `-6ft` suffix is CF's automatic disambiguator because `qhs.pages.dev` is
+    held by an unrelated company. The suffix goes away after we buy a domain.
+- API worker: **https://qhs-api.desperli.workers.dev** (`wrangler deploy --env api`)
+- Share worker: **https://qhs-share.desperli.workers.dev** (`wrangler deploy --env share`)
+- D1: `quick-html-sharing` (`abc8df6d-3fd3-4331-84a1-5974299d6666`, APAC region)
+- R2 bucket: `quick-html-sharing`
+- CF account subdomain: `desperli` (account id `47972744b4002d07fc66280dc5181478`)
 
 The api and share workers run the **same source** but separate deploys give them
 distinct origins, which is what the dispatch logic in `src/index.ts` keys on.
@@ -36,14 +41,21 @@ Collapse to one worker behind two routes:
 - `app.<domain>/api/*` → dashboard host
 - `s.<domain>/*` → share host
 
-## Placeholders to replace before deploy
+## Distribution surfaces (agent integrations)
 
-- `<TBD-CF-ACCOUNT>` — your Cloudflare workers.dev subdomain. Files:
-  - `apps/worker/wrangler.toml` (vars in env.api + env.share)
-  - `apps/web/.env.example` → copy to `.env.production`
-- `<TBD-D1-DATABASE-ID>` — output of `wrangler d1 create`. Files:
-  - `apps/worker/wrangler.toml` (both env blocks)
-- `<TBD-DOMAIN>` (only when you buy a real domain): grep all repo files
+The hosted API is wrapped by two consumer-facing packages so vibe coders can share
+HTML directly from inside their coding agent:
+
+- **`packages/mcp/`** — `quick-html-share-mcp` npm package. Stdio MCP server with 5
+  tools (`qhs_share`, `qhs_edit`, `qhs_delete`, `qhs_stats`, `qhs_list`). Works with
+  Claude Desktop, Cursor, Codex CLI, Continue, or any MCP client.
+- **`packages/skill/`** — Claude Code skill (`SKILL.md` + standalone Node helper at
+  `scripts/qhs.mjs`). User-scope install: `ln -s $(pwd)/packages/skill ~/.claude/skills/qhs`.
+
+Both share the same local edit-token store at `~/.qhs/shares.json` (mirrors the
+web "Recent on this device" pattern). **Endpoint is hardcoded** to the hosted
+worker — `QHS_ENDPOINT` env var exists only for internal dev/test and must NOT be
+documented for end users (it would let them self-host and undercut monetization).
 
 ## Architecture decisions (DO NOT change without re-running /plan-eng-review)
 
