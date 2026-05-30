@@ -6,9 +6,9 @@ Indie SaaS for vibe coders to instantly share AI-generated HTML pages with ungue
 
 | Surface | URL |
 |---------|-----|
-| Dashboard (paste HTML, get URL) | https://qhs-6ft.pages.dev |
-| API worker | https://qhs-api.desperli.workers.dev |
-| Share worker | https://qhs-share.desperli.workers.dev/`<slug>` |
+| Dashboard (paste HTML, get URL) | https://qhs.fyi |
+| API worker | https://api.qhs.fyi |
+| Share worker | https://s.qhs.fyi/`<slug>` |
 
 > ⚠️ Pages got the `-6ft` suffix because `qhs.pages.dev` is held by an unrelated company. It goes away after we buy a real domain (then we collapse to `s.<domain>` / `app.<domain>`).
 
@@ -40,7 +40,7 @@ You now have the qhs skill (auto-triggers on "share this HTML" / "give me a link
 ### 2. Claude Code — skill only, no plugin marketplace
 
 ```bash
-curl -fsSL https://qhs-6ft.pages.dev/install.sh | bash
+curl -fsSL https://qhs.fyi/install.sh | bash
 ```
 
 Drops SKILL.md + helper script into `~/.claude/skills/qhs/`. Use this if you skip the plugin marketplace or want to keep MCP separate.
@@ -95,8 +95,8 @@ bun run deploy:api && bun run deploy:share
 
 # Pages
 cd apps/web
-PUBLIC_API_BASE=https://qhs-api.desperli.workers.dev/api \
-PUBLIC_SHARE_BASE=https://qhs-share.desperli.workers.dev \
+PUBLIC_API_BASE=https://api.qhs.fyi/api \
+PUBLIC_SHARE_BASE=https://s.qhs.fyi \
   bun run build
 ../../node_modules/.bin/wrangler pages deploy dist --project-name=qhs --branch=main
 ```

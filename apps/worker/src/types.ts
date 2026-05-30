@@ -3,7 +3,16 @@
 export interface Bindings {
   DB: D1Database;
   HTML_BUCKET: R2Bucket;
+  /**
+   * "dashboard" → serve /api/* + abuse report ingress. "share" → render user
+   * HTML at /:slug. Optional: when unset, dispatch falls back to URL host
+   * compared against SHARE_HOST (the original v1 behaviour, kept so tests
+   * can simulate both roles from a single deploy).
+   */
+  WORKER_ROLE?: 'dashboard' | 'share';
+  /** Hostname the dashboard is canonically served on (used to construct outbound links). */
   DASHBOARD_HOST: string;
+  /** Hostname the share renderer is canonically served on (used to construct share URLs). */
   SHARE_HOST: string;
   IP_HASH_SALT: string;
 }

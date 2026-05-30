@@ -23,11 +23,11 @@ User-uploaded HTML must NEVER be served from the same origin as the dashboard. T
 
 ### Free deploy mapping (LIVE since 2026-05-28)
 
-- Dashboard: **https://qhs-6ft.pages.dev** (Cloudflare Pages, static Astro build)
+- Dashboard: **https://qhs.fyi** (Cloudflare Pages, static Astro build)
   - The `-6ft` suffix is CF's automatic disambiguator because `qhs.pages.dev` is
     held by an unrelated company. The suffix goes away after we buy a domain.
-- API worker: **https://qhs-api.desperli.workers.dev** (`wrangler deploy --env api`)
-- Share worker: **https://qhs-share.desperli.workers.dev** (`wrangler deploy --env share`)
+- API worker: **https://api.qhs.fyi** (`wrangler deploy --env api`)
+- Share worker: **https://s.qhs.fyi** (`wrangler deploy --env share`)
 - D1: `quick-html-sharing` (`abc8df6d-3fd3-4331-84a1-5974299d6666`, APAC region)
 - R2 bucket: `quick-html-sharing`
 - CF account subdomain: `desperli` (account id `47972744b4002d07fc66280dc5181478`)

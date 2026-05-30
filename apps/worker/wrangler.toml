@@ -1,10 +1,12 @@
-# Default config — not for plain `wrangler deploy`. Always deploy with one of:
-#   wrangler deploy --env api    → qhs-api.<your-account>.workers.dev
-#   wrangler deploy --env share  → qhs-share.<your-account>.workers.dev
+# Two workers run the SAME source — each deploy hardcodes WORKER_ROLE so the
+# entrypoint dispatch routes correctly even when a worker terminates more than
+# one hostname (custom domain + *.workers.dev fallback).
 #
-# Two workers run the SAME code. Each receives its own *.workers.dev origin.
-# That gives us the subdomain isolation property the architecture depends on,
-# without needing a custom domain. Both bind to the same D1 + R2.
+# Deploy:
+#   wrangler deploy --env api    → api.qhs.fyi + qhs-api.desperli.workers.dev
+#   wrangler deploy --env share  → s.qhs.fyi   + qhs-share.desperli.workers.dev
+#
+# Both envs bind the same D1 + R2.
 name = "quick-html-sharing"
 main = "src/index.ts"
 compatibility_date = "2024-12-30"
@@ -13,17 +15,14 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
-# ----------------------------------------------------------------------------
-# After registering a real domain, replace the [env.api]/[env.share] blocks
-# below with a single production block + `routes = [...]`. Until then, free
-# .workers.dev origins are fine for dogfood with friends.
-# ----------------------------------------------------------------------------
-
-# === API worker — dashboard host, handles /api/* ============================
+# === API worker — dashboard role, handles /api/* + cron =====================
 [env.api]
 name = "qhs-api"
 workers_dev = true
-vars = { DASHBOARD_HOST = "qhs-6ft.pages.dev", SHARE_HOST = "qhs-share.desperli.workers.dev" }
+routes = [
+  { pattern = "api.qhs.fyi", custom_domain = true }
+]
+vars = { WORKER_ROLE = "dashboard", DASHBOARD_HOST = "app.qhs.fyi", SHARE_HOST = "s.qhs.fyi" }
 
 [[env.api.d1_databases]]
 binding = "DB"
@@ -39,11 +38,14 @@ bucket_name = "quick-html-sharing"
 [env.api.triggers]
 crons = ["*/10 * * * *"]
 
-# === Share worker — share host, handles /:slug ==============================
+# === Share worker — share role, renders user HTML at /:slug =================
 [env.share]
 name = "qhs-share"
 workers_dev = true
-vars = { DASHBOARD_HOST = "qhs-6ft.pages.dev", SHARE_HOST = "qhs-share.desperli.workers.dev" }
+routes = [
+  { pattern = "s.qhs.fyi", custom_domain = true }
+]
+vars = { WORKER_ROLE = "share", DASHBOARD_HOST = "app.qhs.fyi", SHARE_HOST = "s.qhs.fyi" }
 
 [[env.share.d1_databases]]
 binding = "DB"

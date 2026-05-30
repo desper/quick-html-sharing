@@ -1,6 +1,6 @@
 {
   "name": "quick-html-share-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for quick-html-sharing — upload HTML and get a shareable URL from any MCP client (Claude Desktop, Cursor, Codex CLI, etc).",
   "keywords": ["mcp", "model-context-protocol", "html", "sharing", "claude", "cursor"],
   "license": "MIT",

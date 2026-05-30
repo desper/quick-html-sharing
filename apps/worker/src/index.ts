@@ -65,13 +65,17 @@ shareApp.notFound((c) =>
 
 // ---- top-level dispatch ----
 //
-// Uses URL.host (strips trailing port for default 80/443) rather than the
-// `Host` header. Workers normalize Request URLs, so `new URL(c.req.url).host`
-// gives a stable hostname even in tests where the Host header may be absent
-// or differ in case from the env binding.
+// Production deploys hardcode WORKER_ROLE in wrangler.toml so a worker bound
+// to multiple hostnames (custom domain + *.workers.dev fallback) still routes
+// correctly. Tests that don't set WORKER_ROLE fall back to the original
+// host-based check so a single deploy can simulate both roles from the same
+// vitest worker.
 app.all('*', async (c) => {
+  const role = c.env.WORKER_ROLE;
   const host = new URL(c.req.url).host.toLowerCase();
-  if (host === c.env.SHARE_HOST.toLowerCase()) {
+  const isShare =
+    role === 'share' || (!role && host === c.env.SHARE_HOST.toLowerCase());
+  if (isShare) {
     return shareApp.fetch(c.req.raw, c.env, c.executionCtx);
   }
   return dashboardApp.fetch(c.req.raw, c.env, c.executionCtx);

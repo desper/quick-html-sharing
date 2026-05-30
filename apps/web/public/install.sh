@@ -6,7 +6,7 @@
 # Code plugin install path with the MCP server bundled.
 #
 # Usage:
-#   curl -fsSL https://qhs-6ft.pages.dev/install.sh | bash
+#   curl -fsSL https://qhs.fyi/install.sh | bash
 #
 # Footprint:
 #   ~/.claude/skills/qhs/SKILL.md
@@ -81,4 +81,4 @@ echo '        "qhs": { "command": "npx", "args": ["-y", "quick-html-share-mcp"] 
 echo '      }'
 echo '    }'
 echo
-echo "Docs: https://qhs-6ft.pages.dev  ·  Source: https://gitlab.com/desper/quick-html-sharing"
+echo "Docs: https://qhs.fyi  ·  Source: https://gitlab.com/desper/quick-html-sharing"

@@ -5,10 +5,10 @@
 // end users don't bypass the hosted service (which would break the monetization
 // model for self-hosting).
 
-const DEFAULT_ENDPOINT = 'https://qhs-api.desperli.workers.dev';
+const DEFAULT_ENDPOINT = 'https://api.qhs.fyi';
 const ENDPOINT = process.env.QHS_ENDPOINT ?? DEFAULT_ENDPOINT;
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const USER_AGENT = `qhs-mcp/${VERSION}`;
 
 export interface UploadResult {

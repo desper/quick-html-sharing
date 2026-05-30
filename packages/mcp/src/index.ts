@@ -13,7 +13,7 @@ import { findShare, listShares, rememberShare, forgetShare, STORAGE_PATH } from 
 
 const server = new McpServer({
   name: 'quick-html-share',
-  version: '0.1.0',
+  version: '0.2.0',
 });
 
 // ---------- qhs_share ---------------------------------------------------------
@@ -64,7 +64,7 @@ server.tool(
             `Edit URL (private — save it; needed to update or delete later):`,
             `  ${r.editUrl}`,
             ``,
-            `Stats: https://qhs-api.desperli.workers.dev/api/share/${r.slug}/stats`,
+            `Stats: https://api.qhs.fyi/api/share/${r.slug}/stats`,
           ].join('\n'),
         },
       ],

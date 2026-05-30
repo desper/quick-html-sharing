@@ -13,9 +13,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
-const ENDPOINT = process.env.QHS_ENDPOINT ?? 'https://qhs-api.desperli.workers.dev';
+const ENDPOINT = process.env.QHS_ENDPOINT ?? 'https://api.qhs.fyi';
 const STORE_PATH = join(homedir(), '.qhs', 'shares.json');
-const USER_AGENT = 'qhs-skill/0.1.0';
+const USER_AGENT = 'qhs-skill/0.2.0';
 
 // ---------- storage -----------------------------------------------------------
 

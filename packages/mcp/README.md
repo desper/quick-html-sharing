@@ -1,6 +1,6 @@
 # quick-html-share-mcp
 
-MCP server for **[quick-html-sharing](https://qhs-6ft.pages.dev)** — paste HTML, get an unguessable shareable URL plus viewer analytics, all from inside your coding agent.
+MCP server for **[quick-html-sharing](https://qhs.fyi)** — paste HTML, get an unguessable shareable URL plus viewer analytics, all from inside your coding agent.
 
 For vibe coders sharing AI-generated HTML demos with friends, clients, or coworkers without setting up a deploy pipeline.
 

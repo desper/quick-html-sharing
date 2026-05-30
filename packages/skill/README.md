@@ -4,7 +4,7 @@ Share AI-generated HTML instantly from inside Claude Code. Bundles:
 - A skill that auto-triggers on share/preview/publish phrases (`skills/qhs/SKILL.md`)
 - The `quick-html-share-mcp` MCP server wired through `.mcp.json`
 
-The hosted service lives at https://qhs-6ft.pages.dev — paste HTML, get an unguessable URL plus view analytics. No account, no folder, no deploy pipeline.
+The hosted service lives at https://qhs.fyi — paste HTML, get an unguessable URL plus view analytics. No account, no folder, no deploy pipeline.
 
 ## Install (recommended)
 
@@ -20,7 +20,7 @@ This wires up both the skill and the MCP server in a single step.
 ## Install (skill only, no plugin marketplace)
 
 ```bash
-curl -fsSL https://qhs-6ft.pages.dev/install.sh | bash
+curl -fsSL https://qhs.fyi/install.sh | bash
 ```
 
 ## Dogfood from this repo
