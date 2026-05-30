@@ -1,0 +1,11 @@
+{
+  "name": "qhs",
+  "description": "Share AI-generated HTML instantly via quick-html-sharing. Paste HTML, get an unguessable shareable URL plus a private edit URL. Bundles a Claude Code skill (triggers on 'share this HTML' / 'give me a link' / 'publish this page') and the quick-html-share-mcp MCP server, so editing, deletion, and view stats all work from inside your agent.",
+  "version": "0.1.0",
+  "author": {
+    "name": "desper",
+    "url": "https://gitlab.com/desper/quick-html-sharing"
+  },
+  "homepage": "https://qhs-6ft.pages.dev",
+  "keywords": ["html", "sharing", "mcp", "vibe-coder", "claude-artifact", "demo"]
+}

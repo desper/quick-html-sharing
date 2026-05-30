@@ -1,0 +1,26 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "quick-html-sharing",
+  "description": "Marketplace for quick-html-sharing — the qhs plugin bundles a Claude Code skill and the quick-html-share-mcp MCP server so vibe coders can publish HTML demos in a single agent turn.",
+  "owner": {
+    "name": "desper",
+    "url": "https://gitlab.com/desper/quick-html-sharing"
+  },
+  "plugins": [
+    {
+      "name": "qhs",
+      "description": "Share AI-generated HTML instantly: paste, get unguessable URL + viewer analytics. Bundles a skill (auto-triggers on share / preview / publish phrases) and the quick-html-share-mcp MCP server with 5 tools (qhs_share, qhs_edit, qhs_delete, qhs_stats, qhs_list).",
+      "author": {
+        "name": "desper"
+      },
+      "category": "productivity",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitlab.com/desper/quick-html-sharing.git",
+        "path": "packages/skill",
+        "ref": "main"
+      },
+      "homepage": "https://qhs-6ft.pages.dev"
+    }
+  ]
+}

@@ -22,24 +22,33 @@ Indie SaaS for vibe coders to instantly share AI-generated HTML pages with ungue
 
 Hosted on Cloudflare: Pages (web) + Workers (api/share) + R2 (HTML files) + D1 (metadata + view events).
 
-## Use it from your coding agent
+## Install in your coding agent
 
-The whole point of this project: vibe coder generates HTML → coding agent invokes `qhs_share` → user gets a URL to send. Both surfaces below hit the same hosted API and share a local edit-token store (`~/.qhs/shares.json`), so you can install one or both.
+Three paths depending on which client you use. All hit the same hosted API and share a local edit-token store (`~/.qhs/shares.json`).
 
-### Claude Code (Skill)
+### 1. Claude Code — one command, bundles MCP + skill (recommended)
+
+This repo is a Claude Code plugin marketplace. Inside Claude Code:
+
+```
+/plugin marketplace add gitlab.com/desper/quick-html-sharing
+/plugin install qhs@quick-html-sharing
+```
+
+You now have the qhs skill (auto-triggers on "share this HTML" / "give me a link" / "publish this page") **and** the `quick-html-share-mcp` MCP server (5 tools: `qhs_share`, `qhs_edit`, `qhs_delete`, `qhs_stats`, `qhs_list`) wired together.
+
+### 2. Claude Code — skill only, no plugin marketplace
 
 ```bash
-# Symlink keeps the install in sync with the repo. Or `cp -R` for a snapshot.
-ln -s "$(pwd)/packages/skill" ~/.claude/skills/qhs
+curl -fsSL https://qhs-6ft.pages.dev/install.sh | bash
 ```
 
-Then in any Claude Code session: *"share this HTML"*, *"give me a link"*, *"publish this page"* will auto-trigger.
+Drops SKILL.md + helper script into `~/.claude/skills/qhs/`. Use this if you skip the plugin marketplace or want to keep MCP separate.
 
-### Cursor / Claude Desktop / Codex CLI (MCP)
+### 3. Cursor / Claude Desktop / Codex CLI / Continue / any MCP client
 
-Once `quick-html-share-mcp` is published to npm (TODO), add to your MCP config:
+Add to your client's MCP config:
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -48,18 +57,20 @@ Once `quick-html-share-mcp` is published to npm (TODO), add to your MCP config:
 }
 ```
 
-**Cursor** (`~/.cursor/mcp.json` or via Settings → MCP):
-```json
-{
-  "mcpServers": {
-    "qhs": { "command": "npx", "args": ["-y", "quick-html-share-mcp"] }
-  }
-}
+Common config paths:
+- **Claude Desktop**: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+- **Cursor**: `~/.cursor/mcp.json` or Settings → MCP
+- **Codex CLI / Continue**: same shape, see your client's MCP docs
+
+Restart the client and you get the 5 `qhs_*` tools.
+
+### Local dev / dogfood from this repo
+
+```bash
+ln -s "$(pwd)/packages/skill/skills/qhs" ~/.claude/skills/qhs
 ```
 
-**Codex CLI / Continue / any other MCP client**: same pattern — spawn `npx -y quick-html-share-mcp` as a stdio MCP server.
-
-After restart, the agent has 5 tools: `qhs_share`, `qhs_edit`, `qhs_delete`, `qhs_stats`, `qhs_list`.
+Edits to `packages/skill/skills/qhs/` show up in your next Claude Code session immediately.
 
 ## Dev
 

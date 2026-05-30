@@ -25,14 +25,19 @@ Do NOT use this skill for: deploying full apps (use Vercel/Netlify), hosting ima
 
 ## How it works
 
-A single Node helper lives at `~/.claude/skills/qhs/scripts/qhs.mjs`. It talks to the hosted `quick-html-sharing` service and persists edit tokens at `~/.qhs/shares.json` (same store the companion MCP server uses — they cooperate).
+A single Node helper ships alongside this skill. Depending on how the skill was installed it lives at one of:
+
+- `~/.claude/skills/qhs/scripts/qhs.mjs` (direct install / dogfood symlink)
+- `~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs` (Claude Code plugin install)
+
+Resolve the path on each invocation with `QHS=$(ls -1 ... | head -1)`, then call it via `node "$QHS" <command>`. The helper talks to the hosted `quick-html-sharing` service and persists edit tokens at `~/.qhs/shares.json` (same store the companion MCP server uses — they cooperate).
 
 ### Workflow: share an HTML document
 
 1. If the HTML is in conversation context, write it to a temp file: `Write(file_path="/tmp/qhs-<random>.html", content=...)`.
 2. Call the share command via `Bash`:
    ```bash
-   node ~/.claude/skills/qhs/scripts/qhs.mjs share /tmp/qhs-<random>.html --title="<short label>"
+   QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs 2>/dev/null | head -1) && node "$QHS" share /tmp/qhs-<random>.html --title="<short label>"
    ```
 3. Parse the JSON response (`{slug, shareUrl, editToken, editUrl}`).
 4. Present to the user:
@@ -43,7 +48,7 @@ A single Node helper lives at `~/.claude/skills/qhs/scripts/qhs.mjs`. It talks t
 ### Workflow: update an existing share
 
 ```bash
-node ~/.claude/skills/qhs/scripts/qhs.mjs edit <slug> /tmp/qhs-new.html
+QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs 2>/dev/null | head -1) && node "$QHS" edit <slug> /tmp/qhs-new.html
 ```
 
 The edit token is auto-loaded from `~/.qhs/shares.json`. If unknown (e.g., the share was created on another machine), ask the user to paste the edit URL — the part after `#edit=` is the token — and pass it as `--edit-token=<value>`.
@@ -51,7 +56,7 @@ The edit token is auto-loaded from `~/.qhs/shares.json`. If unknown (e.g., the s
 ### Workflow: delete
 
 ```bash
-node ~/.claude/skills/qhs/scripts/qhs.mjs delete <slug>
+QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs 2>/dev/null | head -1) && node "$QHS" delete <slug>
 ```
 
 Idempotent — re-deleting an already-deleted share returns ok. After this the share URL returns 404.
@@ -59,7 +64,7 @@ Idempotent — re-deleting an already-deleted share returns ok. After this the s
 ### Workflow: stats
 
 ```bash
-node ~/.claude/skills/qhs/scripts/qhs.mjs stats <slug>
+QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs 2>/dev/null | head -1) && node "$QHS" stats <slug>
 ```
 
 Returns `{views, lastViewedAt, createdAt, deleted}`. No edit token needed — anyone with the slug can read stats (matches the product's "link is the secret" model).
@@ -67,7 +72,7 @@ Returns `{views, lastViewedAt, createdAt, deleted}`. No edit token needed — an
 ### Workflow: list
 
 ```bash
-node ~/.claude/skills/qhs/scripts/qhs.mjs list
+QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs 2>/dev/null | head -1) && node "$QHS" list
 ```
 
 Lists shares created from this machine via either this skill or the MCP server. Does NOT include shares created from other machines (we never store them server-side under any account — there are no accounts).

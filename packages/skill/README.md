@@ -1,29 +1,51 @@
-# qhs — Claude Code Skill
+# qhs Claude Code plugin
 
-Share HTML instantly from your Claude Code conversation. Companion to the [`quick-html-share-mcp`](../mcp) MCP server.
+Share AI-generated HTML instantly from inside Claude Code. Bundles:
+- A skill that auto-triggers on share/preview/publish phrases (`skills/qhs/SKILL.md`)
+- The `quick-html-share-mcp` MCP server wired through `.mcp.json`
 
-## Install
+The hosted service lives at https://qhs-6ft.pages.dev — paste HTML, get an unguessable URL plus view analytics. No account, no folder, no deploy pipeline.
 
-Symlink the package into your user-scope skills directory:
+## Install (recommended)
 
-```bash
-ln -s /absolute/path/to/quick-html-sharing/packages/skill ~/.claude/skills/qhs
+Inside Claude Code:
+
+```
+/plugin marketplace add gitlab.com/desper/quick-html-sharing
+/plugin install qhs@quick-html-sharing
 ```
 
-(Or copy if you prefer not to symlink.)
+This wires up both the skill and the MCP server in a single step.
 
-That's it. The skill auto-triggers on phrases like "share this HTML", "give me a link to send", "publish this page".
+## Install (skill only, no plugin marketplace)
 
-## Requirements
+```bash
+curl -fsSL https://qhs-6ft.pages.dev/install.sh | bash
+```
 
-- Node ≥ 18 (for built-in `fetch`)
-- Claude Code
+## Dogfood from this repo
 
-## What gets stored where
+```bash
+ln -s "$(pwd)/skills/qhs" ~/.claude/skills/qhs
+```
 
-- **Server side** (qhs hosted): your HTML, plus a SHA-256 hash of the edit token. Never your IP in plaintext (salted hash only).
-- **Local** (`~/.qhs/shares.json`): edit tokens + slugs + URLs for shares you created from this machine. Lets the skill auto-fill the token for `edit` / `delete`. Shared with the MCP server if you have that installed too.
+Edits to `skills/qhs/SKILL.md` and `skills/qhs/scripts/qhs.mjs` show up in the next Claude Code session.
 
-## See also
+## What you get
 
-- [`quick-html-share-mcp`](../mcp) — same functionality as an MCP server, for Cursor / Claude Desktop / Codex CLI users.
+| Tool / phrase | What happens |
+|---|---|
+| "share this HTML" | `qhs_share` uploads HTML, returns share URL + edit URL |
+| "update the page I shared" | `qhs_edit` replaces HTML at the same slug |
+| "delete my share" | `qhs_delete` takes the page down |
+| "did anyone see my share" | `qhs_stats` returns view count + last viewed |
+| "list my shares" | `qhs_list` reads `~/.qhs/shares.json` |
+
+The Node helper at `skills/qhs/scripts/qhs.mjs` does the same job standalone (Bash-friendly) and shares the same `~/.qhs/shares.json` edit-token store with the MCP server.
+
+## Privacy
+
+- Share URLs are unguessable (~62 bits of entropy) but **not authenticated**. Anyone with the link can view.
+- Edit tokens live in the URL fragment (`#edit=…`) and never reach the server's HTTP logs.
+- Edit tokens are persisted locally at `~/.qhs/shares.json`. Back this file up if you care about being able to edit/delete shares from other machines.
+- Max 1 MB per upload, 1 share per 30s per IP.

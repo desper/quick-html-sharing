@@ -1,0 +1,6 @@
+{
+  "qhs": {
+    "command": "npx",
+    "args": ["-y", "quick-html-share-mcp"]
+  }
+}
