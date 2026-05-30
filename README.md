@@ -130,22 +130,6 @@ wrangler pages deploy dist --project-name=qhs --branch=main
 # and redeploy the workers.
 ```
 
-## Cost control
+## Cost
 
-Free tier limits we sit comfortably under:
-
-| Service | Free limit | Notes |
-|---------|------------|-------|
-| Workers | 100K requests/day, 10ms CPU/req | Hard 429 over the limit — never charges silently |
-| D1 | 5GB storage, 25M reads/day, 100K writes/day | View tracking is fail-open (see `share-page.ts`) |
-| R2 | 10GB storage, **egress free always** | Avg HTML < 100KB ≈ 100K shares fills it |
-| Pages | Unlimited bandwidth, 500 builds/month | — |
-
-Set CF dashboard notifications at billing > $1 + Workers/R2/D1 80% usage. CF has no hard spending cap, so this is the only spend alarm.
-
-## Design + plan docs
-
-Outside the repo (per-user gstack workspace):
-
-- Design: `~/.gstack/projects/quick-html-sharing/seanlee-main-design-*.md`
-- Test plan: `~/.gstack/projects/quick-html-sharing/seanlee-main-eng-review-test-plan-*.md`
+Runs entirely on Cloudflare's free tier (Workers, Pages, R2, D1) — ~$0/mo at indie scale. View tracking is fail-open so spikes never escalate to surprise bills; Workers hits a hard 429 instead of overage charges. Set a CF billing alert anyway: CF has no hard spending cap.
