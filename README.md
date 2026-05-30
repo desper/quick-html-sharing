@@ -2,15 +2,13 @@
 
 Indie SaaS for vibe coders to instantly share AI-generated HTML pages with unguessable URLs and viewer analytics.
 
-**Live (free tier, since 2026-05-28):**
+**Live:**
 
 | Surface | URL |
 |---------|-----|
 | Dashboard (paste HTML, get URL) | https://qhs.fyi |
 | API worker | https://api.qhs.fyi |
 | Share worker | https://s.qhs.fyi/`<slug>` |
-
-> ⚠️ Pages got the `-6ft` suffix because `qhs.pages.dev` is held by an unrelated company. It goes away after we buy a real domain (then we collapse to `s.<domain>` / `app.<domain>`).
 
 ## Architecture
 
