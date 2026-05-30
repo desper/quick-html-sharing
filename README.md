@@ -81,7 +81,7 @@ bun run dev:web       # apps/web on :4321
 cd packages/mcp && bun run build && node dist/index.js
 
 # Skill helper (standalone)
-node packages/skill/scripts/qhs.mjs share path/to/file.html
+node packages/skill/skills/qhs/scripts/qhs.mjs share path/to/file.html
 ```
 
 ## Re-deploy (existing project)
@@ -100,6 +100,11 @@ PUBLIC_SHARE_BASE=https://s.qhs.fyi \
 ```
 
 ## Fresh-account deploy (only if rebuilding from scratch)
+
+> **Forking?** `apps/worker/wrangler.toml` hardcodes the production custom-domain
+> routes (`api.qhs.fyi`, `s.qhs.fyi`). Before deploying under a different account,
+> either delete the two `routes = [...]` blocks (workers.dev URLs still work via
+> `workers_dev = true`) or swap them for your own domain.
 
 ```bash
 wrangler login
@@ -131,3 +136,7 @@ wrangler pages deploy dist --project-name=qhs --branch=main
 ## Cost
 
 Runs entirely on Cloudflare's free tier (Workers, Pages, R2, D1) — ~$0/mo at indie scale. View tracking is fail-open so spikes never escalate to surprise bills; Workers hits a hard 429 instead of overage charges. Set a CF billing alert anyway: CF has no hard spending cap.
+
+## License
+
+[Business Source License 1.1](LICENSE) — source-available, self-host and personal use allowed, offering as a competing third-party hosted/managed service is not. Converts automatically to Apache License 2.0 on **2030-05-28**. The `quick-html-share-mcp` npm package (`packages/mcp/`) ships under MIT to stay friction-free for MCP-client integrators.
