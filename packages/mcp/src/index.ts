@@ -13,7 +13,7 @@ import { findShare, listShares, rememberShare, forgetShare, STORAGE_PATH } from 
 
 const server = new McpServer({
   name: 'quick-html-share',
-  version: '0.2.0',
+  version: '0.2.1',
 });
 
 // ---------- qhs_share ---------------------------------------------------------

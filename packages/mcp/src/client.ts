@@ -8,7 +8,7 @@
 const DEFAULT_ENDPOINT = 'https://api.qhs.fyi';
 const ENDPOINT = process.env.QHS_ENDPOINT ?? DEFAULT_ENDPOINT;
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const USER_AGENT = `qhs-mcp/${VERSION}`;
 
 export interface UploadResult {
