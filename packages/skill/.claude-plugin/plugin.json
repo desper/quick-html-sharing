@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "author": {
     "name": "desper",
-    "url": "https://gitlab.com/desper/quick-html-sharing"
+    "url": "https://github.com/desper/quick-html-sharing"
   },
   "homepage": "https://qhs.fyi",
   "keywords": ["html", "sharing", "mcp", "vibe-coder", "claude-artifact", "demo"]

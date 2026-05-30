@@ -31,7 +31,7 @@ Three paths depending on which client you use. All hit the same hosted API and s
 This repo is a Claude Code plugin marketplace. Inside Claude Code:
 
 ```
-/plugin marketplace add gitlab.com/desper/quick-html-sharing
+/plugin marketplace add github.com/desper/quick-html-sharing
 /plugin install qhs@quick-html-sharing
 ```
 

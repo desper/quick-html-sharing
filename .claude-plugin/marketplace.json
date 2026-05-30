@@ -4,7 +4,7 @@
   "description": "Marketplace for quick-html-sharing — the qhs plugin bundles a Claude Code skill and the quick-html-share-mcp MCP server so vibe coders can publish HTML demos in a single agent turn.",
   "owner": {
     "name": "desper",
-    "url": "https://gitlab.com/desper/quick-html-sharing"
+    "url": "https://github.com/desper/quick-html-sharing"
   },
   "plugins": [
     {
@@ -16,7 +16,7 @@
       "category": "productivity",
       "source": {
         "source": "git-subdir",
-        "url": "https://gitlab.com/desper/quick-html-sharing.git",
+        "url": "https://github.com/desper/quick-html-sharing.git",
         "path": "packages/skill",
         "ref": "main"
       },

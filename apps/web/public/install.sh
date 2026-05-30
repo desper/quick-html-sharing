@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-BASE="https://gitlab.com/desper/quick-html-sharing/-/raw/main/packages/skill/skills/qhs"
+BASE="https://raw.githubusercontent.com/desper/quick-html-sharing/main/packages/skill/skills/qhs"
 DEST="${HOME}/.claude/skills/qhs"
 
 bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -81,4 +81,4 @@ echo '        "qhs": { "command": "npx", "args": ["-y", "quick-html-share-mcp"] 
 echo '      }'
 echo '    }'
 echo
-echo "Docs: https://qhs.fyi  ·  Source: https://gitlab.com/desper/quick-html-sharing"
+echo "Docs: https://qhs.fyi  ·  Source: https://github.com/desper/quick-html-sharing"

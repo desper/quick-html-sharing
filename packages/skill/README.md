@@ -11,7 +11,7 @@ The hosted service lives at https://qhs.fyi — paste HTML, get an unguessable U
 Inside Claude Code:
 
 ```
-/plugin marketplace add gitlab.com/desper/quick-html-sharing
+/plugin marketplace add github.com/desper/quick-html-sharing
 /plugin install qhs@quick-html-sharing
 ```
 
