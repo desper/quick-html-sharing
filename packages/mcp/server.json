@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.desper/quick-html-share-mcp",
+  "description": "Share AI-generated HTML from your coding agent. Unguessable URL + viewer analytics.",
+  "repository": {
+    "url": "https://github.com/desper/quick-html-sharing",
+    "source": "github"
+  },
+  "version": "0.2.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "quick-html-share-mcp",
+      "version": "0.2.3",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

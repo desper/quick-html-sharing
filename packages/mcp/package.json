@@ -1,6 +1,7 @@
 {
   "name": "quick-html-share-mcp",
-  "version": "0.2.2",
+  "mcpName": "io.github.desper/quick-html-share-mcp",
+  "version": "0.2.3",
   "description": "MCP server that lets your coding agent (Claude Desktop, Cursor, Codex CLI, Claude Code, Continue) publish HTML and get back a shareable URL with viewer analytics — in one tool call. No account, link is the secret.",
   "keywords": [
     "mcp",
