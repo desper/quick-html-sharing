@@ -28,7 +28,11 @@ CREATE TABLE IF NOT EXISTS shares (
     committed_at      INTEGER,
     deleted_at        INTEGER,
     sender_ip_hash    TEXT    NOT NULL,
-    content_size      INTEGER NOT NULL DEFAULT 0
+    content_size      INTEGER NOT NULL DEFAULT 0,
+    -- Classifies which surface created the share, derived from the request
+    -- User-Agent at upload time. Values: 'mcp' | 'skill' | 'web' | 'curl' | 'other'.
+    -- Lets us slice promo-channel reach without re-parsing UA strings.
+    client            TEXT    NOT NULL DEFAULT 'other'
 );
 
 CREATE INDEX IF NOT EXISTS idx_shares_status_created

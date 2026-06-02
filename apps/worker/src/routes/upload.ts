@@ -1,10 +1,26 @@
 import { Hono } from 'hono';
-import { MAX_HTML_BYTES, type UploadResponse } from '@qhs/shared';
+import { MAX_HTML_BYTES, type ClientChannel, type UploadResponse } from '@qhs/shared';
 import type { AppEnv } from '../types';
 import { generateSlug } from '../lib/slug';
 import { generateEditToken } from '../lib/tokens';
 import { sha256Hex } from '../lib/hash';
 import { uploadRateLimit } from '../middleware/rate-limit';
+
+/**
+ * Classifies the requesting client from its User-Agent header so we can later
+ * answer "how many shares came from MCP vs Skill vs Web vs other".
+ *
+ * Conservative: matches the prefixes our own packages stamp. Everything else
+ * is bucketed by a broad regex or falls through to 'other'.
+ */
+function classifyClient(ua: string | null | undefined): ClientChannel {
+  if (!ua) return 'other';
+  if (ua.startsWith('qhs-mcp/')) return 'mcp';
+  if (ua.startsWith('qhs-skill/')) return 'skill';
+  if (ua.startsWith('curl/')) return 'curl';
+  if (/mozilla|chrome|safari|firefox|edge|webkit/i.test(ua)) return 'web';
+  return 'other';
+}
 
 /**
  * POST /api/upload
@@ -76,6 +92,7 @@ uploadRoute.post('/upload', uploadRateLimit, async (c) => {
   const editToken = generateEditToken();
   const editTokenHash = await sha256Hex(editToken);
   const senderIpHash = c.get('senderIpHash');
+  const client = classifyClient(c.req.header('User-Agent'));
   const now = Math.floor(Date.now() / 1000);
 
   let slug = '';
@@ -84,10 +101,10 @@ uploadRoute.post('/upload', uploadRateLimit, async (c) => {
     const candidate = generateSlug();
     try {
       await c.env.DB.prepare(
-        `INSERT INTO shares (slug, status, edit_token_hash, created_at, sender_ip_hash, content_size)
-         VALUES (?, 'pending', ?, ?, ?, ?)`,
+        `INSERT INTO shares (slug, status, edit_token_hash, created_at, sender_ip_hash, content_size, client)
+         VALUES (?, 'pending', ?, ?, ?, ?, ?)`,
       )
-        .bind(candidate, editTokenHash, now, senderIpHash, byteLength)
+        .bind(candidate, editTokenHash, now, senderIpHash, byteLength, client)
         .run();
       slug = candidate;
       pendingInserted = true;

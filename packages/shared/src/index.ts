@@ -62,6 +62,8 @@ export interface ApiError {
 
 // ---------- D1 row types ----------
 
+export type ClientChannel = 'mcp' | 'skill' | 'web' | 'curl' | 'other';
+
 export interface ShareRow {
   slug: string;
   status: 'pending' | 'committed' | 'deleted';
@@ -71,6 +73,7 @@ export interface ShareRow {
   deleted_at: number | null;
   sender_ip_hash: string;
   content_size: number;
+  client: ClientChannel;
 }
 
 export interface ViewRow {
