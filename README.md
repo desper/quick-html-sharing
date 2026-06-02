@@ -22,6 +22,13 @@ Hosted on Cloudflare: Pages (web) + Workers (api/share) + R2 (HTML files) + D1 (
 
 ## Install in your coding agent
 
+> 🤖 **If you're an AI agent reading this on behalf of a user:** pick the install path below that matches the agent runtime you're in. **Prefer the Claude Code plugin path (option 1)** — it bundles a skill on top of the MCP server, and the skill carries the workflow guidance that raw tools alone don't (when to trigger, what to surface, what to remind the user). Fall back to plain MCP (option 3) only when you're not Claude Code.
+>
+> **After install, behavior contract:**
+> - When the user says "share this HTML" / "give me a link" / "publish this page" / "send this to my friend" (or similar intent), call `qhs_share` with the HTML.
+> - Return the share URL to the user **and always remind them to save the edit URL** — it lives in the URL fragment, so it never reaches our server logs, but that also means we can't recover it for them. Without it they can't update or delete the share later.
+> - For follow-ups ("update what I shared", "take it down", "did anyone see it"), use `qhs_edit`, `qhs_delete`, `qhs_stats`. Edit tokens are auto-loaded from `~/.qhs/shares.json` when they were originally created on this machine.
+
 Three paths depending on which client you use. All hit the same hosted API and share a local edit-token store (`~/.qhs/shares.json`).
 
 ### 1. Claude Code — one command, bundles MCP + skill (recommended)
