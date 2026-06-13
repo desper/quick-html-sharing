@@ -22,7 +22,10 @@ workers_dev = true
 routes = [
   { pattern = "api.qhs.fyi", custom_domain = true }
 ]
-vars = { WORKER_ROLE = "dashboard", DASHBOARD_HOST = "app.qhs.fyi", SHARE_HOST = "s.qhs.fyi" }
+# DASHBOARD_HOST is where the dashboard actually lives TODAY (free deploy on
+# Pages at qhs.fyi) — it feeds the watermark Report link and the CORS
+# allowlist. Flip to app.qhs.fyi when the production mapping lands.
+vars = { WORKER_ROLE = "dashboard", DASHBOARD_HOST = "qhs.fyi", SHARE_HOST = "s.qhs.fyi" }
 
 [[env.api.d1_databases]]
 binding = "DB"
@@ -45,7 +48,7 @@ workers_dev = true
 routes = [
   { pattern = "s.qhs.fyi", custom_domain = true }
 ]
-vars = { WORKER_ROLE = "share", DASHBOARD_HOST = "app.qhs.fyi", SHARE_HOST = "s.qhs.fyi" }
+vars = { WORKER_ROLE = "share", DASHBOARD_HOST = "qhs.fyi", SHARE_HOST = "s.qhs.fyi" }
 
 [[env.share.d1_databases]]
 binding = "DB"

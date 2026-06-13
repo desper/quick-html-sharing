@@ -33,14 +33,23 @@ dashboardApp.use(
   '/api/*',
   cors({
     origin: (origin, c) => {
-      // Allow only the dashboard host. Browsers block cross-site fetches from
-      // share subdomain to /api/* without this; we explicitly close it.
-      const allowed = `https://${c.env.DASHBOARD_HOST}`;
-      return origin === allowed ? origin : '';
+      // Allowlist: the configured dashboard host plus both dashboard origins
+      // across the free→production migration (free deploy serves qhs.fyi,
+      // production moves to app.qhs.fyi). Browsers block cross-site fetches
+      // from the share subdomain to /api/* without this; we explicitly close
+      // it — notably the share origin is NEVER allowed, so uploaded HTML
+      // can't call the API with a viewer's network position.
+      const allowed = new Set([
+        `https://${c.env.DASHBOARD_HOST}`,
+        'https://qhs.fyi',
+        'https://app.qhs.fyi',
+      ]);
+      return allowed.has(origin) ? origin : '';
     },
     credentials: false,
     allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type'],
+    // Authorization carries the sync key (Bearer qhsk_...) for My Shares.
+    allowHeaders: ['Content-Type', 'Authorization'],
   }),
 );
 
