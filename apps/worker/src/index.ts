@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { AppEnv, Bindings } from './types';
 import { dashboardSecurityHeaders } from './middleware/security-headers';
-import { uploadRoute } from './routes/upload';
-import { editRoute } from './routes/edit';
-import { reportRoute } from './routes/report';
-import { statsRoute } from './routes/stats';
-import { sharePageRoute } from './routes/share-page';
 import { cleanupStalePending } from './routes/cleanup';
+import { editRoute } from './routes/edit';
+import { mySharesRoute } from './routes/my-shares';
+import { reportRoute } from './routes/report';
+import { sharePageRoute } from './routes/share-page';
+import { statsRoute } from './routes/stats';
+import { uploadRoute } from './routes/upload';
+import type { AppEnv, Bindings } from './types';
 
 /**
  * Worker entrypoint.
@@ -45,6 +46,7 @@ dashboardApp.use(
 
 dashboardApp.route('/api', uploadRoute);
 dashboardApp.route('/api', editRoute);
+dashboardApp.route('/api', mySharesRoute);
 dashboardApp.route('/api', reportRoute);
 dashboardApp.route('/api', statsRoute);
 
@@ -73,8 +75,7 @@ shareApp.notFound((c) =>
 app.all('*', async (c) => {
   const role = c.env.WORKER_ROLE;
   const host = new URL(c.req.url).host.toLowerCase();
-  const isShare =
-    role === 'share' || (!role && host === c.env.SHARE_HOST.toLowerCase());
+  const isShare = role === 'share' || (!role && host === c.env.SHARE_HOST.toLowerCase());
   if (isShare) {
     return shareApp.fetch(c.req.raw, c.env, c.executionCtx);
   }

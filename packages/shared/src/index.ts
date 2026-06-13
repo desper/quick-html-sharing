@@ -73,6 +73,38 @@ export interface ReportRequest {
   reporterEmail?: string;
 }
 
+// ---------- My Shares (sync key registry) ----------
+
+/** Page size bounds for GET /api/my-shares cursor pagination. */
+export const MY_SHARES_DEFAULT_LIMIT = 50;
+export const MY_SHARES_MAX_LIMIT = 100;
+
+/** Max edit tokens per POST /api/my-shares/claim call (client loops batches). */
+export const CLAIM_MAX_TOKENS = 50;
+
+export interface MyShareItem {
+  slug: string;
+  createdAt: string; // ISO
+  shareUrl: string;
+}
+
+export interface MySharesResponse {
+  shares: MyShareItem[];
+  /** Opaque cursor for the next page; null = no more pages. */
+  nextCursor: string | null;
+}
+
+export type ClaimOutcome = 'claimed' | 'already-yours' | 'owned-by-other' | 'not-found';
+
+export interface ClaimRequest {
+  editTokens: string[];
+}
+
+export interface ClaimResponse {
+  /** Aligned to the request's editTokens order (tokens are never echoed back). */
+  results: { result: ClaimOutcome; slug: string | null }[];
+}
+
 export interface ApiError {
   error: string;
   message: string;
