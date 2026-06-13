@@ -5,6 +5,7 @@ import { generateSlug } from '../lib/slug';
 import { generateEditToken } from '../lib/tokens';
 import { sha256Hex } from '../lib/hash';
 import { uploadRateLimit } from '../middleware/rate-limit';
+import { syncKeyOptional } from '../middleware/sync-key';
 
 /**
  * Classifies the requesting client from its User-Agent header so we can later
@@ -47,7 +48,7 @@ function classifyClient(ua: string | null | undefined): ClientChannel {
  */
 export const uploadRoute = new Hono<AppEnv>();
 
-uploadRoute.post('/upload', uploadRateLimit, async (c) => {
+uploadRoute.post('/upload', uploadRateLimit, syncKeyOptional, async (c) => {
   // ---- validate ----
   const contentType = c.req.header('Content-Type') ?? '';
   let html: string;
@@ -94,6 +95,11 @@ uploadRoute.post('/upload', uploadRateLimit, async (c) => {
   const senderIpHash = c.get('senderIpHash');
   const client = classifyClient(c.req.header('User-Agent'));
   const now = Math.floor(Date.now() / 1000);
+  // Bearer sync key at upload time auto-enrolls the share (eng-review Issue
+  // 4A): owner goes in with the INSERT, not the commit UPDATE, so even a
+  // pending row that later fails R2 is attributable. NULL = unclaimed.
+  const ownerKeyHash = c.get('ownerKeyHash') ?? null;
+  const ownerClaimedAt = ownerKeyHash ? now : null;
 
   let slug = '';
   let pendingInserted = false;
@@ -101,10 +107,10 @@ uploadRoute.post('/upload', uploadRateLimit, async (c) => {
     const candidate = generateSlug();
     try {
       await c.env.DB.prepare(
-        `INSERT INTO shares (slug, status, edit_token_hash, created_at, sender_ip_hash, content_size, client)
-         VALUES (?, 'pending', ?, ?, ?, ?, ?)`,
+        `INSERT INTO shares (slug, status, edit_token_hash, created_at, sender_ip_hash, content_size, client, owner_key_hash, owner_claimed_at)
+         VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
       )
-        .bind(candidate, editTokenHash, now, senderIpHash, byteLength, client)
+        .bind(candidate, editTokenHash, now, senderIpHash, byteLength, client, ownerKeyHash, ownerClaimedAt)
         .run();
       slug = candidate;
       pendingInserted = true;
