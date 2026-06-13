@@ -41,6 +41,26 @@ bucket_name = "quick-html-sharing"
 [env.api.triggers]
 crons = ["*/10 * * * *"]
 
+# My Shares rate limits — two namespaces on the same (free) binding: IP layer
+# is the abuse floor, key layer keeps one noisy key from draining a shared
+# IP's budget. api env only; middleware fail-opens where these are absent.
+# Limits mirror MY_SHARES_RATE_LIMIT_* in packages/shared.
+[[env.api.ratelimits]]
+name = "MY_SHARES_RATE_LIMIT_IP"
+namespace_id = "1001"
+
+  [env.api.ratelimits.simple]
+  limit = 60
+  period = 60
+
+[[env.api.ratelimits]]
+name = "MY_SHARES_RATE_LIMIT_KEY"
+namespace_id = "1002"
+
+  [env.api.ratelimits.simple]
+  limit = 30
+  period = 60
+
 # === Share worker — share role, renders user HTML at /:slug =================
 [env.share]
 name = "qhs-share"

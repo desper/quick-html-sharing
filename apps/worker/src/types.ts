@@ -15,6 +15,13 @@ export interface Bindings {
   /** Hostname the share renderer is canonically served on (used to construct share URLs). */
   SHARE_HOST: string;
   IP_HASH_SALT: string;
+  /**
+   * Workers Rate Limiting bindings for the My Shares endpoints (api env
+   * only). Optional on purpose: middleware fail-opens when absent so local
+   * dev, tests without injection, and the share env keep working.
+   */
+  MY_SHARES_RATE_LIMIT_IP?: RateLimit;
+  MY_SHARES_RATE_LIMIT_KEY?: RateLimit;
 }
 
 export interface Variables {

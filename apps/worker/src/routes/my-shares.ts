@@ -8,6 +8,7 @@ import {
 } from '@qhs/shared';
 import { Hono } from 'hono';
 import { sha256Hex } from '../lib/hash';
+import { mySharesRateLimit } from '../middleware/my-shares-rate-limit';
 import { syncKeyAuth } from '../middleware/sync-key';
 import type { AppEnv } from '../types';
 
@@ -59,7 +60,7 @@ function decodeCursor(cursor: string): { createdAt: number; slug: string } | nul
  * metadata), view counts (would force an aggregate per page load — use
  * GET /api/share/:slug/stats), and any token or hash material.
  */
-mySharesRoute.get('/my-shares', syncKeyAuth, async (c) => {
+mySharesRoute.get('/my-shares', syncKeyAuth, mySharesRateLimit, async (c) => {
   const ownerKeyHash = c.get('ownerKeyHash');
 
   const limitParam = c.req.query('limit');
@@ -132,7 +133,7 @@ mySharesRoute.get('/my-shares', syncKeyAuth, async (c) => {
  * Only committed shares are claimable — pending/deleted uniformly report
  * not-found so the response doesn't leak lifecycle state.
  */
-mySharesRoute.post('/my-shares/claim', syncKeyAuth, async (c) => {
+mySharesRoute.post('/my-shares/claim', syncKeyAuth, mySharesRateLimit, async (c) => {
   const ownerKeyHash = c.get('ownerKeyHash');
   if (!ownerKeyHash) {
     // syncKeyAuth guarantees this; belt-and-braces for type narrowing.

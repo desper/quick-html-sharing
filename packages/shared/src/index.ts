@@ -82,6 +82,18 @@ export const MY_SHARES_MAX_LIMIT = 100;
 /** Max edit tokens per POST /api/my-shares/claim call (client loops batches). */
 export const CLAIM_MAX_TOKENS = 50;
 
+/**
+ * My Shares rate limits (Workers Rate Limiting binding, per CF location).
+ * Loose-filter numbers: a real client paginates a 500-share registry in 5
+ * requests and claims its whole localStorage in 1-2 — these only stop loops.
+ * IP layer is the actual abuse floor (keys are free to mint, so the per-key
+ * layer alone would be trivially bypassable); key layer just keeps one noisy
+ * key from burning its IP's whole budget for cohabiting users (CGNAT, office).
+ */
+export const MY_SHARES_RATE_LIMIT_PERIOD_SECONDS = 60; // binding accepts 10 or 60
+export const MY_SHARES_RATE_LIMIT_PER_IP = 60;
+export const MY_SHARES_RATE_LIMIT_PER_KEY = 30;
+
 export interface MyShareItem {
   slug: string;
   createdAt: string; // ISO
