@@ -20,6 +20,12 @@ export interface Bindings {
 export interface Variables {
   /** Set by uploadRateLimit middleware so the upload handler doesn't re-hash. */
   senderIpHash: string;
+  /**
+   * sha256 of the caller's sync key, set by sync-key middleware. Present on
+   * syncKeyAuth routes; may be absent on syncKeyOptional routes (no bearer).
+   * The raw key is never stored on context and never logged.
+   */
+  ownerKeyHash?: string;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };
