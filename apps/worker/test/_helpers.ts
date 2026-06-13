@@ -1,4 +1,4 @@
-import { SELF, fetchMock } from 'cloudflare:test';
+import { SELF } from 'cloudflare:test';
 
 /**
  * Sends a Request to the Worker and returns Response. Default Host is the
@@ -32,11 +32,4 @@ export async function uploadHtml(
     },
     body: JSON.stringify({ html }),
   });
-}
-
-/** Suppresses fetchMock unused-warning in tests that don't mock outbound calls. */
-export function quietFetchMock() {
-  if (typeof fetchMock?.deactivate === 'function') {
-    fetchMock.deactivate();
-  }
 }

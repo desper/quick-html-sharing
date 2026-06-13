@@ -12,7 +12,7 @@ describe('POST /api/upload', () => {
     const body = (await res.json()) as Record<string, string>;
     expect(body.slug).toMatch(/^[a-z0-9]{12}$/);
     expect(body.shareUrl).toBe(`https://s.example.com/${body.slug}`);
-    expect(body.editToken.length).toBeGreaterThan(20);
+    expect(body.editToken?.length ?? 0).toBeGreaterThan(20);
     expect(body.editUrl).toBe(`${body.shareUrl}#edit=${body.editToken}`);
 
     const row = await env.DB.prepare('SELECT status, content_size FROM shares WHERE slug = ?')
