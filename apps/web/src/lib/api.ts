@@ -1,4 +1,4 @@
-import type { ShareStats, UploadResponse } from '@qhs/shared';
+import type { ClaimResponse, MySharesResponse, ShareStats, UploadResponse } from '@qhs/shared';
 
 const API_BASE = (import.meta.env.PUBLIC_API_BASE as string | undefined) ?? '/api';
 
@@ -31,10 +31,58 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
   return data as T;
 }
 
-export async function uploadHtml(html: string): Promise<UploadResponse> {
+/**
+ * Sync key travels ONLY in the Authorization header — NEVER a path/query, where
+ * it would leak into request logs (mirrors the worker's iron rule).
+ */
+function bearer(syncKey: string): Record<string, string> {
+  return { Authorization: `Bearer ${syncKey}` };
+}
+
+/**
+ * D20: when a sync key exists on this device, upload auto-attaches it so the new
+ * share is enrolled into My Shares at INSERT time. No new UI; absence of a key
+ * is the legacy (unenrolled) path, byte-for-byte unchanged.
+ */
+export async function uploadHtml(html: string, syncKey?: string): Promise<UploadResponse> {
   return call<UploadResponse>('/upload', {
     method: 'POST',
     body: JSON.stringify({ html }),
+    headers: syncKey ? bearer(syncKey) : undefined,
+  });
+}
+
+export async function listMyShares(
+  syncKey: string,
+  cursor?: string | null,
+): Promise<MySharesResponse> {
+  const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+  return call<MySharesResponse>(`/my-shares${qs}`, {
+    method: 'GET',
+    headers: bearer(syncKey),
+  });
+}
+
+export async function claimShares(syncKey: string, editTokens: string[]): Promise<ClaimResponse> {
+  return call<ClaimResponse>('/my-shares/claim', {
+    method: 'POST',
+    headers: bearer(syncKey),
+    body: JSON.stringify({ editTokens }),
+  });
+}
+
+/**
+ * Owner-key delete (no edit token needed). The worker's DELETE takes the
+ * owner-key path whenever a Bearer is present — body is ignored — so the share
+ * must already be owned by this key (everything in the My Shares list is).
+ */
+export async function deleteShareWithKey(
+  slug: string,
+  syncKey: string,
+): Promise<{ slug: string; ok: true }> {
+  return call(`/share/${encodeURIComponent(slug)}`, {
+    method: 'DELETE',
+    headers: bearer(syncKey),
   });
 }
 

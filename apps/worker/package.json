@@ -6,6 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev --env api",
+    "dev:e2e": "wrangler d1 execute quick-html-sharing --local --env api --file=db/schema.sql && wrangler dev --env api --port 8787",
     "deploy:api": "wrangler deploy --env api",
     "deploy:share": "wrangler deploy --env share",
     "deploy": "bun run deploy:api && bun run deploy:share",

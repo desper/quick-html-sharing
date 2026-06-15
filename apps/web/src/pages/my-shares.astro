@@ -1,0 +1,626 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="My Shares — quick-html-sharing">
+  <h1>My Shares</h1>
+  <p class="lede">Your synced shares, available across devices.</p>
+
+  <!-- ===== State A: setup (only when no sync key on this device) ===== -->
+  <section id="setup" hidden>
+    <p class="muted" style="max-width: 60ch">
+      A <strong>sync code</strong> links the shares you make across your devices.
+      Shares already on this device are pulled in automatically when you set up.
+      Shares you made on another device — without saving their edit URL — can't be
+      pulled back in.
+    </p>
+    <div class="row" style="margin: 20px 0">
+      <button id="create-btn" type="button">Create a sync code</button>
+      <button class="secondary" id="show-import-btn" type="button">
+        I already have one
+      </button>
+    </div>
+
+    <div id="import-area" hidden style="max-width: 480px">
+      <label class="muted" for="import-input">Paste your sync code</label>
+      <div class="row" style="margin-top: 6px; align-items: stretch">
+        <input
+          id="import-input"
+          class="text-input"
+          type="text"
+          placeholder="qhsk_…"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+        <button id="import-btn" type="button">Import</button>
+      </div>
+      <p class="error" id="import-error" aria-live="polite" hidden></p>
+    </div>
+  </section>
+
+  <!-- ===== Sync code reveal (amber notice) — first-time + re-reveal ===== -->
+  <section class="notice" id="code-reveal" hidden>
+    <p>
+      <strong
+        >You can see this code again on this device, but nowhere else — save it
+        now.</strong
+      >
+      Store it in a password manager so you can reconnect on another device.
+    </p>
+    <div class="url-box code-hero" style="margin: 12px 0">
+      <input id="sync-code" type="text" readonly />
+      <button class="secondary" data-copy="#sync-code" type="button">Copy</button>
+    </div>
+    <div class="row">
+      <button class="secondary" id="download-code" type="button">Download .txt</button>
+    </div>
+    <label class="confirm-gate" for="saved-check" style="margin-top: 14px">
+      <input id="saved-check" type="checkbox" />
+      <span>I've saved my code somewhere safe</span>
+    </label>
+    <div class="row" style="margin-top: 12px">
+      <button id="continue-btn" type="button" disabled>Continue</button>
+    </div>
+  </section>
+
+  <!-- ===== Claim banner (remnant rescue only) ===== -->
+  <div class="claim-banner" id="claim-banner" hidden>
+    <p id="claim-banner-text">Some shares on this device aren't in your synced list yet.</p>
+    <button id="claim-banner-btn" type="button">Add them</button>
+  </div>
+
+  <!-- ===== Claim result summary ===== -->
+  <p class="claim-result" id="claim-result" aria-live="polite" hidden></p>
+
+  <!-- ===== State C: list ===== -->
+  <section id="list-region" hidden>
+    <p class="muted" id="list-status" aria-live="polite" hidden></p>
+    <div class="row" id="offline-banner" hidden
+      style="justify-content: space-between; margin-bottom: 12px">
+      <span class="muted" id="offline-text"></span>
+      <button class="secondary" id="offline-retry" type="button">Retry</button>
+    </div>
+    <ul class="recent" id="shares-list"></ul>
+    <div class="row" style="margin-top: 16px">
+      <button class="secondary" id="load-more" type="button" hidden>Load more</button>
+    </div>
+
+    <!-- footer sync settings -->
+    <div class="sync-settings" id="sync-settings">
+      <h2>Sync settings</h2>
+      <div class="row">
+        <button class="secondary" id="reveal-btn" type="button">Show my sync code</button>
+        <button class="secondary" id="disconnect-btn" type="button">
+          Disconnect this device
+        </button>
+      </div>
+      <div id="disconnect-confirm" hidden style="margin-top: 12px; max-width: 60ch">
+        <p class="muted">
+          This removes the sync code from this browser. Your list stays on the
+          server — you'll need the code to reconnect. If you haven't saved it,
+          click 'Show my sync code' first.
+        </p>
+        <div class="row">
+          <button class="danger" id="disconnect-confirm-btn" type="button">
+            Confirm disconnect
+          </button>
+          <button class="secondary" id="disconnect-cancel-btn" type="button">Cancel</button>
+        </div>
+      </div>
+      <p class="muted" style="margin-top: 16px">
+        Use this same code in the qhs MCP/CLI to sync your agent shares.
+      </p>
+    </div>
+  </section>
+
+  <script>
+    import { CLAIM_MAX_TOKENS, type ClaimOutcome } from '@qhs/shared';
+    import { ApiError, claimShares, deleteShareWithKey, listMyShares } from '../lib/api';
+    import { forgetShare, loadRecent, type RecentShare } from '../lib/recent';
+    import {
+      clearSyncKey,
+      generateSyncKey,
+      isValidSyncKey,
+      loadSyncKey,
+      saveSyncKey,
+    } from '../lib/synckey';
+
+    const $ = <T extends Element = HTMLElement>(sel: string) =>
+      document.querySelector(sel) as T;
+    const show = (el: Element | null) => el?.removeAttribute('hidden');
+    const hide = (el: Element | null) => el?.setAttribute('hidden', '');
+
+    // Regions
+    const setup = $('#setup');
+    const importArea = $('#import-area');
+    const importInput = $('#import-input') as HTMLInputElement;
+    const importError = $('#import-error');
+    const codeReveal = $('#code-reveal');
+    const syncCodeInput = $('#sync-code') as HTMLInputElement;
+    const savedCheck = $('#saved-check') as HTMLInputElement;
+    const continueBtn = $('#continue-btn') as HTMLButtonElement;
+    const claimBanner = $('#claim-banner');
+    const claimBannerText = $('#claim-banner-text');
+    const claimResult = $('#claim-result');
+    const listRegion = $('#list-region');
+    const listStatus = $('#list-status');
+    const offlineBanner = $('#offline-banner');
+    const offlineText = $('#offline-text');
+    const sharesList = $('#shares-list') as HTMLUListElement;
+    const loadMoreBtn = $('#load-more') as HTMLButtonElement;
+    const disconnectConfirm = $('#disconnect-confirm');
+    const disconnectConfirmBtn = $('#disconnect-confirm-btn') as HTMLButtonElement;
+
+    // 'first' = after Create/Import setup → Continue runs auto-claim.
+    // 'reveal' = re-opened from "Show my sync code" → Continue just closes.
+    let revealMode: 'first' | 'reveal' = 'first';
+    let nextCursor: string | null = null;
+
+    // ---- helpers ----------------------------------------------------------
+
+    /** Map slug → recent (edit token lives only in localStorage, D19). */
+    function recentsBySlug(): Map<string, RecentShare> {
+      const m = new Map<string, RecentShare>();
+      for (const r of loadRecent()) m.set(r.slug, r);
+      return m;
+    }
+
+    function extractEditToken(editUrl: string): string | null {
+      const i = editUrl.indexOf('#edit=');
+      if (i === -1) return null;
+      return editUrl.slice(i + '#edit='.length) || null;
+    }
+
+    function apiMessage(e: unknown, fallback: string): string {
+      if (e instanceof ApiError) {
+        if (e.status === 429) return 'Too many requests — wait a moment and retry.';
+        return e.message || fallback;
+      }
+      return fallback;
+    }
+
+    // ---- list rendering ---------------------------------------------------
+
+    interface ListItem {
+      slug: string;
+      createdAt: string;
+      shareUrl: string;
+    }
+
+    function makeRow(item: ListItem): HTMLLIElement {
+      const li = document.createElement('li');
+      const recent = recentsBySlug().get(item.slug);
+      const editToken = recent ? extractEditToken(recent.editUrl) : null;
+
+      const left = document.createElement('div');
+      const a = document.createElement('a');
+      a.className = 'slug';
+      a.href = item.shareUrl;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = item.slug;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = new Date(item.createdAt).toLocaleString();
+      left.append(a, meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'row';
+
+      const stats = document.createElement('a');
+      stats.className = 'muted';
+      stats.href = `/stats?slug=${encodeURIComponent(item.slug)}`;
+      stats.textContent = 'stats';
+      actions.append(stats);
+
+      // D19: edit only when this device holds the slug's edit token.
+      if (recent && editToken) {
+        const edit = document.createElement('button');
+        edit.className = 'secondary';
+        edit.type = 'button';
+        edit.textContent = 'edit';
+        edit.addEventListener('click', () => {
+          const u = new URL(recent.editUrl);
+          const editSlug = u.pathname.replace(/^\//, '');
+          window.location.href = `/edit?slug=${encodeURIComponent(editSlug)}${u.hash}`;
+        });
+        actions.append(edit);
+      }
+
+      actions.append(makeDeleteButton(item.slug, li));
+      li.append(left, actions);
+      return li;
+    }
+
+    /** Inline two-step delete (D9): click → "Confirm delete?" (3s revert). */
+    function makeDeleteButton(slug: string, li: HTMLLIElement): HTMLButtonElement {
+      const btn = document.createElement('button');
+      btn.className = 'secondary';
+      btn.type = 'button';
+      btn.textContent = 'delete';
+      let armed = false;
+      let timer: number | undefined;
+      let note: HTMLParagraphElement | undefined;
+
+      const disarm = () => {
+        armed = false;
+        btn.classList.remove('danger');
+        btn.classList.add('secondary');
+        btn.textContent = 'delete';
+        note?.remove();
+        note = undefined;
+        if (timer) window.clearTimeout(timer);
+      };
+
+      btn.addEventListener('click', async () => {
+        if (!armed) {
+          armed = true;
+          btn.classList.remove('secondary');
+          btn.classList.add('danger');
+          btn.textContent = 'Confirm delete?';
+          note = document.createElement('p');
+          note.className = 'meta';
+          note.textContent = 'This takes the share offline everywhere';
+          li.append(note);
+          timer = window.setTimeout(disarm, 3000);
+          return;
+        }
+        if (timer) window.clearTimeout(timer);
+        btn.disabled = true;
+        btn.textContent = 'Deleting…';
+        const key = loadSyncKey();
+        if (!key) return;
+        try {
+          await deleteShareWithKey(slug, key);
+          forgetShare(slug); // keep the local mirror from resurrecting it
+          li.remove();
+          if (!sharesList.children.length) renderEmpty(false);
+        } catch (e) {
+          btn.disabled = false;
+          disarm();
+          if (note) note.remove();
+          const err = document.createElement('p');
+          err.className = 'error';
+          err.textContent = apiMessage(e, 'Delete failed — try again.');
+          li.append(err);
+        }
+      });
+      return btn;
+    }
+
+    function renderEmpty(afterImport: boolean) {
+      sharesList.innerHTML = '';
+      hide(offlineBanner);
+      hide(loadMoreBtn);
+      show(listStatus);
+      if (afterImport) {
+        // D7: an empty result for a hand-typed code is probably a typo.
+        listStatus.innerHTML =
+          'No shares found for this code. If you expected to see your list, ' +
+          'double-check it — one wrong character points to a different, empty list.';
+      } else {
+        listStatus.innerHTML =
+          'No shares yet. Anything you share will show up here automatically. ' +
+          '<a href="/">→ Share something</a>';
+      }
+    }
+
+    function appendRows(items: ListItem[]) {
+      for (const it of items) sharesList.append(makeRow(it));
+    }
+
+    async function loadList(reset: boolean) {
+      const key = loadSyncKey();
+      if (!key) return;
+      if (reset) {
+        sharesList.innerHTML = '';
+        nextCursor = null;
+        hide(offlineBanner);
+        show(listStatus);
+        listStatus.textContent = 'Loading your shares…';
+      } else {
+        loadMoreBtn.disabled = true;
+        loadMoreBtn.textContent = 'Loading…';
+      }
+      try {
+        const r = await listMyShares(key, reset ? null : nextCursor);
+        if (reset && r.shares.length === 0) {
+          renderEmpty(false);
+          return;
+        }
+        hide(listStatus);
+        appendRows(r.shares);
+        nextCursor = r.nextCursor;
+        if (nextCursor) {
+          show(loadMoreBtn);
+          loadMoreBtn.disabled = false;
+          loadMoreBtn.textContent = 'Load more';
+        } else {
+          hide(loadMoreBtn);
+        }
+      } catch (e) {
+        if (e instanceof ApiError) {
+          // Server reachable but unhappy (e.g. 429): show the message, no fallback.
+          show(listStatus);
+          listStatus.textContent = apiMessage(e, 'Could not load your shares.');
+        } else if (reset) {
+          // Network failure → mirror MCP offline fallback: local recents only.
+          renderOfflineFallback();
+        } else {
+          loadMoreBtn.disabled = false;
+          loadMoreBtn.textContent = 'Load more';
+        }
+      }
+    }
+
+    function renderOfflineFallback() {
+      hide(listStatus);
+      sharesList.innerHTML = '';
+      const recents = loadRecent();
+      appendRows(recents.map((r) => ({ slug: r.slug, createdAt: r.createdAt, shareUrl: r.shareUrl })));
+      hide(loadMoreBtn);
+      show(offlineBanner);
+      offlineText.textContent =
+        'Couldn’t reach the server — showing shares saved on this device only.';
+    }
+
+    // ---- claim ------------------------------------------------------------
+
+    /** Edit tokens for every local recent (the claim source set). */
+    function localEditTokens(): string[] {
+      return loadRecent()
+        .map((r) => extractEditToken(r.editUrl))
+        .filter((t): t is string => !!t);
+    }
+
+    /** Claim the given edit tokens in ≤CLAIM_MAX_TOKENS batches; tally outcomes. */
+    async function claimTokens(key: string, tokens: string[]) {
+      const counts: Record<ClaimOutcome, number> = {
+        claimed: 0,
+        'already-yours': 0,
+        'owned-by-other': 0,
+        'not-found': 0,
+      };
+      for (let i = 0; i < tokens.length; i += CLAIM_MAX_TOKENS) {
+        const batch = tokens.slice(i, i + CLAIM_MAX_TOKENS);
+        const r = await claimShares(key, batch);
+        for (const res of r.results) counts[res.result]++;
+      }
+      return counts;
+    }
+
+    function summarizeClaim(counts: Record<ClaimOutcome, number>) {
+      const added = counts.claimed + counts['already-yours'];
+      const parts: string[] = [];
+      if (added > 0) {
+        parts.push(`${added} share${added === 1 ? '' : 's'} from this device ${added === 1 ? 'was' : 'were'} added`);
+      }
+      const extra: string[] = [];
+      if (counts['owned-by-other'] > 0) {
+        extra.push(
+          `${counts['owned-by-other']} couldn’t be added — ${counts['owned-by-other'] === 1 ? "it's" : "they're"} already on another sync code`,
+        );
+      }
+      if (counts['not-found'] > 0) {
+        extra.push(`${counts['not-found']} ${counts['not-found'] === 1 ? 'was' : 'were'} deleted elsewhere`);
+      }
+      const text = [parts.join(''), extra.join('; ')].filter(Boolean).join(' — ');
+      return text || 'Nothing to add from this device.';
+    }
+
+    /**
+     * Auto-claim local remnants then (re)load the list. This is the first-setup
+     * action (D4): runs after Create/Import and from the remnant banner. With
+     * nothing to claim it silently just loads the list — no "nothing to add".
+     * Retry on 5xx interruption (claim is idempotent).
+     */
+    async function runClaimFlow(key: string, fromBanner: boolean) {
+      const tokens = localEditTokens();
+      if (tokens.length === 0) {
+        hide(claimResult);
+        if (fromBanner) hide(claimBanner);
+        await loadList(true);
+        return;
+      }
+      show(claimResult);
+      claimResult.className = 'claim-result muted';
+      claimResult.textContent = 'Adding shares from this device…';
+      try {
+        const counts = await claimTokens(key, tokens);
+        claimResult.className =
+          counts['owned-by-other'] + counts['not-found'] > 0
+            ? 'claim-result muted'
+            : 'claim-result success';
+        claimResult.textContent = summarizeClaim(counts);
+        if (fromBanner) hide(claimBanner);
+        await loadList(true);
+      } catch (e) {
+        claimResult.className = 'claim-result error';
+        claimResult.innerHTML = '';
+        const span = document.createElement('span');
+        span.textContent = `${apiMessage(e, 'Some shares couldn’t be added.')} `;
+        const retry = document.createElement('button');
+        retry.className = 'secondary';
+        retry.type = 'button';
+        retry.textContent = 'Retry';
+        retry.addEventListener('click', () => runClaimFlow(key, fromBanner));
+        claimResult.append(span, retry);
+      }
+    }
+
+    /** After a list loads, surface a banner if local remnants aren't enrolled. */
+    function maybeShowClaimBanner() {
+      const key = loadSyncKey();
+      if (!key) return;
+      const listedSlugs = new Set(
+        Array.from(sharesList.querySelectorAll('.slug')).map((a) => a.textContent),
+      );
+      const remnants = loadRecent().filter((r) => !listedSlugs.has(r.slug));
+      if (remnants.length === 0) return;
+      claimBannerText.textContent =
+        `${remnants.length} share${remnants.length === 1 ? '' : 's'} on this device ${remnants.length === 1 ? "isn't" : "aren't"} in your synced list yet.`;
+      show(claimBanner);
+    }
+
+    // ---- setup / reveal ---------------------------------------------------
+
+    function openReveal(mode: 'first' | 'reveal', code: string) {
+      revealMode = mode;
+      syncCodeInput.value = code;
+      savedCheck.checked = false;
+      continueBtn.disabled = true;
+      hide(setup);
+      show(codeReveal);
+      codeReveal.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    $('#create-btn').addEventListener('click', () => {
+      // D10/M3: persist the key the instant it's minted — refresh must not lose it.
+      const key = generateSyncKey();
+      saveSyncKey(key);
+      openReveal('first', key);
+    });
+
+    $('#show-import-btn').addEventListener('click', () => {
+      show(importArea);
+      importInput.focus();
+    });
+
+    $('#import-btn').addEventListener('click', async () => {
+      hide(importError);
+      const code = importInput.value.trim();
+      if (!isValidSyncKey(code)) {
+        // D7/D9: client-side gate — never send a malformed code to the server.
+        importError.textContent =
+          "That doesn't look like a sync code — it should start with qhsk_";
+        show(importError);
+        return;
+      }
+      const btn = $('#import-btn') as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = 'Importing…';
+      saveSyncKey(code);
+      enterListState();
+      if (localEditTokens().length > 0) {
+        // First setup with local存量 → auto-claim it onto this code (D4), then
+        // the reload shows the merged list (reconnected + newly claimed).
+        await runClaimFlow(code, false);
+        return;
+      }
+      // No local shares to claim → just verify the code. An empty result with
+      // nothing local is almost certainly a typo (D7), not a real empty list.
+      try {
+        const r = await listMyShares(code, null);
+        if (r.shares.length === 0) {
+          renderEmpty(true);
+        } else {
+          hide(listStatus);
+          appendRows(r.shares);
+          nextCursor = r.nextCursor;
+          if (nextCursor) show(loadMoreBtn);
+        }
+      } catch (e) {
+        // Couldn't verify the code; keep it but degrade to offline view.
+        renderOfflineFallback();
+        claimResult.className = 'claim-result error';
+        claimResult.textContent = apiMessage(e, 'Could not reach the server to verify this code.');
+        show(claimResult);
+      }
+    });
+
+    importInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') ($('#import-btn') as HTMLButtonElement).click();
+    });
+
+    savedCheck.addEventListener('change', () => {
+      continueBtn.disabled = !savedCheck.checked;
+    });
+
+    $('#download-code').addEventListener('click', () => {
+      const blob = new Blob([syncCodeInput.value], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'qhs-sync-code.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    continueBtn.addEventListener('click', async () => {
+      hide(codeReveal);
+      const key = loadSyncKey();
+      if (!key) return;
+      if (revealMode === 'reveal') {
+        // Re-reveal from settings — list is already on screen, nothing else to do.
+        return;
+      }
+      enterListState();
+      await runClaimFlow(key, false);
+    });
+
+    // ---- list state / settings -------------------------------------------
+
+    function enterListState() {
+      hide(setup);
+      hide(codeReveal);
+      show(listRegion);
+    }
+
+    loadMoreBtn.addEventListener('click', () => loadList(false));
+    $('#offline-retry').addEventListener('click', () => loadList(true));
+
+    $('#reveal-btn').addEventListener('click', () => {
+      const key = loadSyncKey();
+      if (key) openReveal('reveal', key);
+    });
+
+    const disconnectBtn = $('#disconnect-btn') as HTMLButtonElement;
+    disconnectBtn.addEventListener('click', () => {
+      const open = !disconnectConfirm.hasAttribute('hidden');
+      open ? hide(disconnectConfirm) : show(disconnectConfirm);
+    });
+    $('#disconnect-cancel-btn').addEventListener('click', () => hide(disconnectConfirm));
+    disconnectConfirmBtn.addEventListener('click', () => {
+      clearSyncKey();
+      window.location.reload(); // back to State A setup
+    });
+
+    $('#claim-banner-btn').addEventListener('click', () => {
+      const key = loadSyncKey();
+      if (key) runClaimFlow(key, true);
+    });
+
+    // Copy buttons (shared with homepage pattern).
+    document.addEventListener('click', async (ev) => {
+      const target = ev.target as HTMLElement;
+      const copySel = target.getAttribute?.('data-copy');
+      if (!copySel) return;
+      const el = document.querySelector(copySel) as HTMLInputElement;
+      if (!el) return;
+      try {
+        await navigator.clipboard.writeText(el.value);
+        const orig = target.textContent;
+        target.textContent = 'Copied';
+        setTimeout(() => (target.textContent = orig), 1200);
+      } catch {
+        el.select();
+      }
+    });
+
+    // ---- init -------------------------------------------------------------
+
+    async function init() {
+      const key = loadSyncKey();
+      if (!key) {
+        show(setup);
+        return;
+      }
+      enterListState();
+      await loadList(true);
+      maybeShowClaimBanner();
+    }
+
+    init();
+  </script>
+</Base>

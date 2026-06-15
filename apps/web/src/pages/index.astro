@@ -25,7 +25,8 @@ import Base from '../layouts/Base.astro';
 
   <section class="panel" id="result-panel" hidden>
     <h2 style="margin-top:0;font-size:18px">Your share is live</h2>
-    <p class="muted">
+    <p class="success" id="added-note" hidden>Added to My Shares ✓</p>
+    <p class="muted" id="edit-copy">
       Save this edit URL — it's the only way to update or delete this share later.
       The token never reaches our servers.
     </p>
@@ -48,8 +49,11 @@ import Base from '../layouts/Base.astro';
   </section>
 
   <section class="panel">
-    <h2 style="margin-top:0;font-size:18px">Recent on this device</h2>
-    <p class="muted" id="recent-empty">
+    <div class="row" style="justify-content: space-between; align-items: baseline">
+      <h2 style="margin:0;font-size:18px">Recent on this device</h2>
+      <a href="/my-shares">→ My Shares</a>
+    </div>
+    <p class="muted" id="recent-empty" style="margin-top: 8px">
       Nothing yet. Anything you upload from this browser shows up here.
     </p>
     <ul class="recent" id="recent-list"></ul>
@@ -58,6 +62,7 @@ import Base from '../layouts/Base.astro';
   <script>
     import { uploadHtml, ApiError } from '../lib/api';
     import { loadRecent, rememberShare, forgetShare } from '../lib/recent';
+    import { loadSyncKey } from '../lib/synckey';
     import { MAX_HTML_BYTES } from '@qhs/shared';
 
     const $ = <T extends Element = HTMLElement>(sel: string) =>
@@ -75,6 +80,8 @@ import Base from '../layouts/Base.astro';
     const recentList = $('#recent-list') as HTMLUListElement;
     const recentEmpty = $('#recent-empty');
     const dropzone = $('#dropzone');
+    const addedNote = $('#added-note');
+    const editCopy = $('#edit-copy');
 
     function fmtBytes(n: number) {
       if (n < 1024) return `${n} bytes`;
@@ -107,13 +114,20 @@ import Base from '../layouts/Base.astro';
       const original = shareBtn.textContent ?? 'Share';
       shareBtn.textContent = 'Sharing…';
       try {
-        const r = await uploadHtml(input.value);
+        // D20: when a sync key exists, upload auto-enrolls into My Shares.
+        const syncKey = loadSyncKey() ?? undefined;
+        const r = await uploadHtml(input.value, syncKey);
         shareUrl.value = r.shareUrl;
         editUrl.value = r.editUrl;
         openShare.href = r.shareUrl;
         openStats.href = `/stats?slug=${encodeURIComponent(r.slug)}`;
         rememberShare({ slug: r.slug, shareUrl: r.shareUrl, editUrl: r.editUrl });
         renderRecent();
+        // D21: copy depends on whether delete is also reachable via My Shares.
+        addedNote.hidden = !syncKey;
+        editCopy.textContent = syncKey
+          ? "Save this edit URL — it's the only way to update this share. (Deleting works from My Shares too.)"
+          : "Save this edit URL — it's the only way to update or delete this share later. The token never reaches our servers.";
         resultPanel.hidden = false;
         resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (e) {
