@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
-import { dashboardFetch, uploadHtml } from './_helpers';
 import { MAX_HTML_BYTES } from '@qhs/shared';
+import { describe, expect, it } from 'vitest';
+import { sha256Hex } from '../src/lib/hash';
+import { dashboardFetch, testSyncKey, uploadHtml } from './_helpers';
 
 const SAMPLE_HTML = '<!doctype html><html><body><h1>Hello</h1></body></html>';
 
@@ -12,7 +13,7 @@ describe('POST /api/upload', () => {
     const body = (await res.json()) as Record<string, string>;
     expect(body.slug).toMatch(/^[a-z0-9]{12}$/);
     expect(body.shareUrl).toBe(`https://s.example.com/${body.slug}`);
-    expect(body.editToken.length).toBeGreaterThan(20);
+    expect(body.editToken?.length ?? 0).toBeGreaterThan(20);
     expect(body.editUrl).toBe(`${body.shareUrl}#edit=${body.editToken}`);
 
     const row = await env.DB.prepare('SELECT status, content_size FROM shares WHERE slug = ?')
@@ -88,6 +89,44 @@ describe('POST /api/upload', () => {
       body: SAMPLE_HTML,
     });
     expect(res.status).toBe(201);
+  });
+
+  // CRITICAL regression: the header-less path above must keep producing
+  // unowned rows — pinned here so auto-enrollment can't leak into it.
+  it('upload without a sync key leaves owner_key_hash NULL', async () => {
+    const res = await uploadHtml(SAMPLE_HTML, '198.51.100.12');
+    expect(res.status).toBe(201);
+    const { slug } = (await res.json()) as { slug: string };
+    const row = await env.DB.prepare(
+      'SELECT owner_key_hash, owner_claimed_at FROM shares WHERE slug = ?',
+    )
+      .bind(slug)
+      .first<{ owner_key_hash: string | null; owner_claimed_at: number | null }>();
+    expect(row?.owner_key_hash).toBeNull();
+    expect(row?.owner_claimed_at).toBeNull();
+  });
+
+  it('upload with a bearer sync key auto-enrolls the share', async () => {
+    const key = testSyncKey('g');
+    const res = await uploadHtml(SAMPLE_HTML, '198.51.100.13', key);
+    expect(res.status).toBe(201);
+    const { slug } = (await res.json()) as { slug: string };
+    const row = await env.DB.prepare(
+      'SELECT owner_key_hash, owner_claimed_at FROM shares WHERE slug = ?',
+    )
+      .bind(slug)
+      .first<{ owner_key_hash: string | null; owner_claimed_at: number | null }>();
+    expect(row?.owner_key_hash).toBe(await sha256Hex(key));
+    expect(row?.owner_claimed_at).not.toBeNull();
+  });
+
+  it('malformed bearer on upload → 401, nothing stored', async () => {
+    const res = await uploadHtml(SAMPLE_HTML, '198.51.100.14', 'oops-not-a-key');
+    expect(res.status).toBe(401);
+    // 401 fires in middleware before any INSERT; storage is per-test
+    // isolated, so the table must still be empty.
+    const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM shares').first<{ n: number }>();
+    expect(count?.n).toBe(0);
   });
 
   it('two uploads from different IPs both succeed (rate-limit is per-IP)', async () => {

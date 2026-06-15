@@ -32,7 +32,16 @@ CREATE TABLE IF NOT EXISTS shares (
     -- Classifies which surface created the share, derived from the request
     -- User-Agent at upload time. Values: 'mcp' | 'skill' | 'web' | 'curl' | 'other'.
     -- Lets us slice promo-channel reach without re-parsing UA strings.
-    client            TEXT    NOT NULL DEFAULT 'other'
+    client            TEXT    NOT NULL DEFAULT 'other',
+    -- My Shares (anonymous sync key registry):
+    -- sha256 of the sync key; NULL = unclaimed. The raw key never reaches
+    -- storage and never appears in URLs or logs.
+    owner_key_hash    TEXT,
+    owner_claimed_at  INTEGER,
+    -- v2 vault placeholders (NOT implemented in v1; reserved to mark intent —
+    -- client-side-encrypted edit token storage):
+    vault_ciphertext  TEXT,
+    vault_updated_at  INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_shares_status_created
@@ -40,6 +49,20 @@ CREATE INDEX IF NOT EXISTS idx_shares_status_created
 
 CREATE INDEX IF NOT EXISTS idx_shares_sender_created
     ON shares (sender_ip_hash, created_at);
+
+-- Composite partial index for My Shares cursor pagination:
+--   WHERE owner_key_hash = ? AND (created_at, slug) < cursor
+--   ORDER BY created_at DESC, slug DESC
+-- The composite key makes pagination a pure seek (D1 bills rows_read);
+-- slug is a required tiebreaker since created_at has second precision.
+CREATE INDEX IF NOT EXISTS idx_shares_owner
+    ON shares (owner_key_hash, created_at DESC, slug DESC)
+    WHERE owner_key_hash IS NOT NULL;
+
+-- Claim does a reverse lookup by edit_token_hash; without this it's a
+-- full table scan per token.
+CREATE INDEX IF NOT EXISTS idx_shares_edit_token
+    ON shares (edit_token_hash);
 
 -- ----------------------------------------------------------------------------
 -- views: append-only log of page views on share pages.

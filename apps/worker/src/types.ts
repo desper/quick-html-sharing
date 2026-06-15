@@ -15,11 +15,24 @@ export interface Bindings {
   /** Hostname the share renderer is canonically served on (used to construct share URLs). */
   SHARE_HOST: string;
   IP_HASH_SALT: string;
+  /**
+   * Workers Rate Limiting bindings for the My Shares endpoints (api env
+   * only). Optional on purpose: middleware fail-opens when absent so local
+   * dev, tests without injection, and the share env keep working.
+   */
+  MY_SHARES_RATE_LIMIT_IP?: RateLimit;
+  MY_SHARES_RATE_LIMIT_KEY?: RateLimit;
 }
 
 export interface Variables {
   /** Set by uploadRateLimit middleware so the upload handler doesn't re-hash. */
   senderIpHash: string;
+  /**
+   * sha256 of the caller's sync key, set by sync-key middleware. Present on
+   * syncKeyAuth routes; may be absent on syncKeyOptional routes (no bearer).
+   * The raw key is never stored on context and never logged.
+   */
+  ownerKeyHash?: string;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };

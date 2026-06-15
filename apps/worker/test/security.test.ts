@@ -21,16 +21,45 @@ describe('security boundaries', () => {
     expect(csp).toContain("frame-ancestors 'none'");
   });
 
-  it('CORS rejects fetches from non-dashboard origin', async () => {
-    const res = await dashboardFetch('/api/health', {
+  // CRITICAL regression (eng-review Issue 2A): the allowlist must admit every
+  // dashboard origin across the free→production migration and nothing else —
+  // especially never the share origin, or uploaded HTML could call /api/*.
+  it('CORS allowlist admits dashboard origins only', async () => {
+    const preflight = (origin: string) =>
+      dashboardFetch('/api/my-shares', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'authorization',
+        },
+      });
+
+    for (const origin of [
+      'https://app.example.com', // env DASHBOARD_HOST
+      'https://qhs.fyi', // live free deploy
+      'https://app.qhs.fyi', // production mapping
+    ]) {
+      const res = await preflight(origin);
+      expect(res.headers.get('Access-Control-Allow-Origin'), origin).toBe(origin);
+    }
+
+    for (const origin of ['https://evil.example.com', 'https://s.example.com']) {
+      const res = await preflight(origin);
+      expect(res.headers.get('Access-Control-Allow-Origin'), origin).not.toBe(origin);
+    }
+  });
+
+  it('CORS preflight allows the Authorization header (sync key bearer)', async () => {
+    const res = await dashboardFetch('/api/my-shares', {
       method: 'OPTIONS',
       headers: {
-        Origin: 'https://evil.example.com',
-        'Access-Control-Request-Method': 'POST',
+        Origin: 'https://qhs.fyi',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization',
       },
     });
-    // No matching CORS Allow-Origin header for the disallowed origin.
-    expect(res.headers.get('Access-Control-Allow-Origin')).not.toBe('https://evil.example.com');
+    expect(res.headers.get('Access-Control-Allow-Headers') ?? '').toMatch(/authorization/i);
   });
 
   it('edit token only validates against its own slug', async () => {
