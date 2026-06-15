@@ -60,6 +60,22 @@ test('① create code → upload → My Shares lists the new share', async ({ br
   await expect(page.locator('#shares-list')).toContainText(slug);
 });
 
+test('list state hides the offline-retry and claim banners (CSS [hidden] guard)', async ({
+  browser,
+}) => {
+  // Regression: `.row`/`.claim-banner` set `display: flex`, which has higher
+  // specificity than the UA `[hidden] { display: none }` rule, so toggling the
+  // `hidden` attribute via hide() left both the offline "Retry" button and the
+  // claim banner permanently on screen in production. A global
+  // `[hidden] { display: none !important }` reset is what keeps them hidden.
+  const page = await newDevice(browser, '203.0.113.40');
+  await createSyncCode(page); // lands in the (empty) list state, no remnants
+  await expect(page.locator('#list-region')).toBeVisible();
+  await expect(page.locator('#offline-banner')).toBeHidden();
+  await expect(page.locator('#offline-retry')).toBeHidden();
+  await expect(page.locator('#claim-banner')).toBeHidden();
+});
+
 test('② new context pastes code → claims local remnant → list reconnects', async ({ browser }) => {
   // Device A: owns the sync code and one enrolled share (S1).
   const pageA = await newDevice(browser, '203.0.113.20');
