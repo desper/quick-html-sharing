@@ -16,15 +16,23 @@ export default defineConfig({
       // (custom domain). For free CF deploy, set
       //   PUBLIC_API_BASE=https://qhs-api.<acct>.workers.dev/api
       // before running `bun run build`.
-      'import.meta.env.PUBLIC_API_BASE': JSON.stringify(
-        process.env.PUBLIC_API_BASE ?? '/api',
-      ),
+      'import.meta.env.PUBLIC_API_BASE': JSON.stringify(process.env.PUBLIC_API_BASE ?? '/api'),
       // Share host for "Open share" buttons. Empty string means same-origin
       // (custom domain). Set to e.g.
       //   PUBLIC_SHARE_BASE=https://qhs-share.<acct>.workers.dev
-      'import.meta.env.PUBLIC_SHARE_BASE': JSON.stringify(
-        process.env.PUBLIC_SHARE_BASE ?? '',
-      ),
+      'import.meta.env.PUBLIC_SHARE_BASE': JSON.stringify(process.env.PUBLIC_SHARE_BASE ?? ''),
+    },
+    // Dev-only: proxy /api to the local worker so the browser stays same-origin
+    // (no CORS in dev/E2E). Production is genuinely cross-origin and its CORS
+    // allowlist is pinned by the worker unit tests. The static build ignores
+    // this entirely.
+    server: {
+      proxy: {
+        '/api': {
+          target: process.env.E2E_API_TARGET ?? 'http://localhost:8787',
+          changeOrigin: false,
+        },
+      },
     },
   },
 });

@@ -13,10 +13,13 @@
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
     "dev:worker": "bun run --filter @qhs/worker dev",
-    "dev:web": "bun run --filter @qhs/web dev"
+    "dev:web": "bun run --filter @qhs/web dev",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@playwright/test": "^1.49.0",
     "typescript": "^5.7.0"
   },
   "engines": {
