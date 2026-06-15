@@ -17,6 +17,13 @@
   box-sizing: border-box;
 }
 
+/* The UA `[hidden] { display: none }` rule has the lowest specificity, so any
+   class that sets `display` (e.g. `.row`, `.claim-banner` → flex) silently
+   defeats the `hidden` attribute our JS toggles with. Force it to win. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
