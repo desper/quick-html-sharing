@@ -75,11 +75,26 @@ async function recordView(c: Context<AppEnv>, slug: string) {
  *   - Required for the disclaimer that protects you from being treated as
  *     publisher of phishing content.
  *
- * Keeps the user's HTML byte-identical except for one appended <div>.
+ * To avoid covering content in the bottom-right corner (chat bubbles, back-to-top
+ * buttons, etc.), the badge collapses to a tiny "qhs" pill by default and expands
+ * to the full "Hosted by qhs · Report" only on hover or keyboard focus. Pure CSS,
+ * no JS — the expansion is :hover/:focus-within, and the Report link stays in the
+ * DOM (opacity-toggled, not display:none) so it remains keyboard-reachable. All
+ * selectors are scoped under #__qhs_wm so user styles are never touched.
+ *
+ * Keeps the user's HTML byte-identical except for one appended <style> + <div>.
  */
 function injectWatermark(html: string, slug: string, dashboardHost: string): string {
   const reportUrl = `https://${dashboardHost}/report?slug=${encodeURIComponent(slug)}`;
-  const watermark = `\n<!-- quick-html-sharing watermark -->\n<div id="__qhs_wm" style="position:fixed;bottom:8px;right:8px;z-index:2147483647;font:11px/1.4 system-ui,sans-serif;background:rgba(0,0,0,.55);color:#fff;padding:5px 9px;border-radius:6px;backdrop-filter:blur(6px)">Hosted by qhs · <a href="${reportUrl}" style="color:#fff;text-decoration:underline" rel="noopener">Report</a></div>\n`;
+  const css =
+    '#__qhs_wm{position:fixed;bottom:8px;right:8px;z-index:2147483647;font:11px/1.4 system-ui,sans-serif;opacity:.7;transition:opacity .15s}' +
+    '#__qhs_wm:hover{opacity:1}' +
+    '#__qhs_wm .__qhs_dot{display:inline-block;background:rgba(0,0,0,.55);color:#fff;padding:4px 7px;border-radius:6px;backdrop-filter:blur(6px);user-select:none;transition:opacity .15s}' +
+    '#__qhs_wm .__qhs_full{position:absolute;right:0;bottom:0;white-space:nowrap;background:rgba(0,0,0,.7);color:#fff;padding:5px 9px;border-radius:6px;backdrop-filter:blur(6px);opacity:0;pointer-events:none;transition:opacity .15s}' +
+    '#__qhs_wm:hover .__qhs_dot,#__qhs_wm:focus-within .__qhs_dot{opacity:0}' +
+    '#__qhs_wm:hover .__qhs_full,#__qhs_wm:focus-within .__qhs_full{opacity:1;pointer-events:auto}' +
+    '#__qhs_wm a{color:#fff;text-decoration:underline}';
+  const watermark = `\n<!-- quick-html-sharing watermark -->\n<style>${css}</style>\n<div id="__qhs_wm"><span class="__qhs_dot">qhs</span><span class="__qhs_full">Hosted by qhs · <a href="${reportUrl}" rel="noopener">Report</a></span></div>\n`;
   // Append before </body> if present, else at end.
   const i = html.lastIndexOf('</body>');
   if (i === -1) return html + watermark;
