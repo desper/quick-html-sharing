@@ -29,9 +29,9 @@ import { htmlObjectKey } from './objectKey';
  *   │  ③ UPDATE shares SET latest_version = n+k, content_size = ?           │
  *   │       WHERE slug = ? AND latest_version = n            ← CAS          │
  *   │        │                                                              │
- *   │        ├── changes = 0 ──► lost the race. Back to ①. The object we    │
- *   │        │                   wrote is now an orphan; the retention      │
- *   │        │                   sweep reclaims it after its grace period.  │
+ *   │        ├── changes = 0 ──► lost the race. Delete the object we just   │
+ *   │        │                   wrote — it is ours alone, so this cannot   │
+ *   │        │                   touch the winner — then back to ①.         │
  *   │        ▼                                                              │
  *   │  ④ done                                                               │
  *   │                                                                       │
@@ -124,15 +124,26 @@ export async function writeNewVersion(
 
     if ((update.meta.changes ?? 0) > 0) return { ok: true, version: claimed };
 
-    // Lost the CAS: someone committed while we were writing. Our object is now
-    // unreferenced. Deleting it here would race with whoever won, so flag the
-    // share instead and let the sweep collect it after the grace period.
+    // Lost the CAS: someone committed while we were writing. Our object is
+    // unreferenced and can never become referenced — latest_version only moves
+    // forward, and the winner advanced it using a different key.
     //
-    // The flag is what makes that collection reachable: the sweep's other
-    // trigger is crossing the retention threshold, which a share with a
-    // handful of versions never does — its orphan would otherwise sit in R2
-    // forever. COALESCE keeps the oldest timestamp so a burst of contention
-    // does not keep pushing the collection out.
+    // Delete it immediately. That is safe *because* the put was a conditional
+    // create: no other writer can be holding this key, so we only ever remove
+    // our own bytes. (Under a plain put it would not be — see the header.)
+    //
+    // Leaving it for the sweep is not good enough. The sweep only recognises an
+    // orphan as `version > latest_version`, and a later writer can push
+    // latest_version past our number, at which point our object is
+    // indistinguishable from a real old version. It then shows up in the
+    // version list as something the share never actually served, and restoring
+    // it would publish content that was never live.
+    await env.HTML_BUCKET.delete(htmlObjectKey(slug, claimed)).catch(() => undefined);
+
+    // Backstop for the delete above failing. It covers the window where our
+    // number is still above latest_version; past that, retention eventually
+    // reclaims the object as an old version. COALESCE keeps the oldest
+    // timestamp so a burst of contention does not keep pushing collection out.
     await env.DB.prepare(
       `UPDATE shares SET orphan_since = COALESCE(orphan_since, ?) WHERE slug = ?`,
     )

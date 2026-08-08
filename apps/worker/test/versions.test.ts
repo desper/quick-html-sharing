@@ -1,7 +1,9 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import type { RestoreResponse, VersionListResponse } from '@qhs/shared';
 import { describe, expect, it } from 'vitest';
+import { writeNewVersion } from '../src/lib/versions';
 import worker from '../src/index';
+import type { Bindings } from '../src/types';
 import { dashboardFetch, shareFetch, testSyncKey, uploadParsed } from './_helpers';
 
 const ORIGINAL = '<!doctype html><html><body><h1>Original</h1></body></html>';
@@ -386,5 +388,44 @@ describe('concurrent writes never overwrite each other', () => {
 
     const view = await shareFetch(`/${slug}`);
     expect(view.status).toBe(200);
+  });
+
+  it('a writer that loses the CAS leaves no phantom version behind', async () => {
+    const { slug, editToken } = await createShare();
+
+    // A D1 stub that always loses: SELECT reports latest_version = 1, the CAS
+    // UPDATE reports zero rows changed. That is exactly what a writer sees when
+    // someone else commits between its put and its CAS — and it is the one
+    // interleaving Promise.all can't be relied on to produce.
+    const losingDb = {
+      prepare(sql: string) {
+        const stmt = {
+          bind: () => stmt,
+          first: async () => (sql.includes('SELECT') ? { latest_version: 1 } : null),
+          run: async () => ({ meta: { changes: 0 } }),
+        };
+        return stmt;
+      },
+    };
+
+    const result = await writeNewVersion(
+      { ...env, DB: losingDb } as unknown as Bindings,
+      slug,
+      '<p>Loser</p>',
+      13,
+    );
+    expect(result).toEqual({ ok: false, reason: 'conflict' });
+
+    // Nothing the loser wrote may survive. A leftover object is not merely
+    // wasted storage: its number sits below whatever latest_version the winners
+    // reach, so the sweep's `version > latest_version` orphan rule never sees
+    // it, and it shows up in the version list as a version the share never
+    // served. Restoring it would publish content that was never live.
+    const listed = await env.HTML_BUCKET.list({ prefix: `shares/${slug}/` });
+    expect(listed.objects.map((o) => o.key)).toEqual([]);
+
+    // And the share itself is untouched — the loser must not have moved it.
+    const versions = await listVersions(slug, { editToken });
+    expect(versions.versions.map((v) => v.version)).toEqual([1]);
   });
 });
