@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS shares (
     -- storage and never appears in URLs or logs.
     owner_key_hash    TEXT,
     owner_claimed_at  INTEGER,
+    -- v2 vault placeholders (NOT implemented in v1; reserved to mark intent —
+    -- client-side-encrypted edit token storage):
+    vault_ciphertext  TEXT,
+    vault_updated_at  INTEGER,
     -- Version history:
     --   latest_version        highest version that exists; monotonic, never
     --                         decreases (restore writes a NEW version rather
@@ -52,13 +56,14 @@ CREATE TABLE IF NOT EXISTS shares (
     --                         this the sweep only inspects shares that crossed
     --                         the retention threshold, so an orphan on a
     --                         two-version share would never be reclaimed.
+    --
+    -- These sit last on purpose: ALTER TABLE ADD COLUMN appends, so a database
+    -- built from migration 0005 lands them here. Keeping this file in the same
+    -- order means the two build paths produce byte-identical schemas, and any
+    -- future diff between them is a real drift rather than noise.
     latest_version        INTEGER NOT NULL DEFAULT 1,
     versions_pruned_below INTEGER NOT NULL DEFAULT 1,
-    orphan_since          INTEGER,
-    -- v2 vault placeholders (NOT implemented in v1; reserved to mark intent —
-    -- client-side-encrypted edit token storage):
-    vault_ciphertext  TEXT,
-    vault_updated_at  INTEGER
+    orphan_since          INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_shares_status_created
