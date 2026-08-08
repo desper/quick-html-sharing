@@ -219,9 +219,18 @@ import Base from '../layouts/Base.astro';
 
     async function load() {
       if (!slug) {
+        // Nothing to name here, so clear the placeholder outright rather than
+        // leaving "Loading…" above an error that will never resolve.
+        slugLine.textContent = '';
         showError('Missing slug.');
         return;
       }
+
+      // Name the share before the credential check. Every error path below
+      // leaves this line on screen, and "Loading…" sitting above an error
+      // reads as a page that hung rather than one that answered.
+      slugLine.textContent = slug;
+
       const creds = credentials();
       if (!creds) {
         showError(
@@ -230,7 +239,6 @@ import Base from '../layouts/Base.astro';
         return;
       }
 
-      slugLine.textContent = slug;
       const shareBase = (import.meta.env.PUBLIC_SHARE_BASE as string | undefined) ?? '';
       openShare.href = shareBase ? `${shareBase}/${slug}` : `/${slug}`;
 
