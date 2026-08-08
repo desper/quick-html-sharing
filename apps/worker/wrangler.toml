@@ -61,6 +61,19 @@ namespace_id = "1002"
   limit = 30
   period = 60
 
+# Write limit for the endpoints that create a version (edit, restore).
+# Restore is the reason: a few dozen bytes of request make the server copy up
+# to 1 MB, so a loop inflates storage far faster than uploading could, and
+# retention bounds steady-state size rather than a burst. Edit had no limit at
+# all before this. Mirrors WRITE_RATE_LIMIT_* in packages/shared.
+[[env.api.ratelimits]]
+name = "WRITE_RATE_LIMIT_IP"
+namespace_id = "1003"
+
+  [env.api.ratelimits.simple]
+  limit = 30
+  period = 60
+
 # === Share worker — share role, renders user HTML at /:slug =================
 [env.share]
 name = "qhs-share"

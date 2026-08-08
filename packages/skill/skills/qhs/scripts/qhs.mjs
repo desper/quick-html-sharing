@@ -57,6 +57,54 @@ async function forgetShare(slug) {
   await saveStore(store);
 }
 
+async function loadSyncKey() {
+  const store = await loadStore();
+  return store.syncKey ?? null;
+}
+
+async function saveSyncKey(syncKey) {
+  const store = await loadStore();
+  store.syncKey = syncKey;
+  await saveStore(store);
+}
+
+/**
+ * Picks whichever credential this machine has for a share.
+ *
+ * Edit token first — it is share-specific. The sync code is the fallback that
+ * makes version history work for shares created on another machine, which is
+ * the case where it matters most.
+ */
+async function versionCredentials(slug, editTokenFlag) {
+  const token = editTokenFlag ?? (await findShare(slug))?.editToken;
+  if (token) return { editToken: token };
+  const syncKey = await loadSyncKey();
+  if (syncKey) return { syncKey };
+  throw new Error(
+    `No credential for "${slug}" on this machine. Pass --edit-token=<value>, or run ` +
+      `"qhs sync-code <qhsk_...>" once so shares from your other machines work here.`,
+  );
+}
+
+/**
+ * Version endpoints are POST so the edit token can travel in a body — URLs end
+ * up in server logs. Exactly one credential is sent; the server treats a bearer
+ * as authoritative and ignores a body token.
+ */
+function credentialInit(creds) {
+  return creds.syncKey
+    ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.syncKey}` },
+        body: '{}',
+      }
+    : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editToken: creds.editToken }),
+      };
+}
+
 // ---------- http client -------------------------------------------------------
 
 async function call(path, init) {
@@ -171,19 +219,87 @@ const commands = {
     const store = await loadStore();
     console.log(JSON.stringify({ shares: store.shares }, null, 2));
   },
+
+  async versions(argv) {
+    const { flags, positional } = parseFlags(argv);
+    const slug = positional[0];
+    if (!slug) throw new Error('Usage: qhs versions <slug>');
+    const creds = await versionCredentials(slug, flags['edit-token']);
+    const r = await call(
+      '/api/share/' + encodeURIComponent(slug) + '/versions',
+      credentialInit(creds),
+    );
+    console.log(JSON.stringify(r, null, 2));
+  },
+
+  async preview(argv) {
+    const { flags, positional } = parseFlags(argv);
+    const [slug, version] = positional;
+    if (!slug || !version) throw new Error('Usage: qhs preview <slug> <version>');
+    const creds = await versionCredentials(slug, flags['edit-token']);
+    const init = credentialInit(creds);
+    const path =
+      '/api/share/' + encodeURIComponent(slug) + '/versions/' + encodeURIComponent(version) + '/raw';
+    const r = await fetch(`${ENDPOINT}${path}`, {
+      ...init,
+      headers: { 'User-Agent': USER_AGENT, ...init.headers },
+    });
+    if (!r.ok) {
+      throw new Error(`qhs POST ${path} → ${r.status}: ${await r.text().catch(() => '')}`);
+    }
+    // Raw source on stdout, not JSON — the point is to read it before deciding
+    // whether to republish it to everyone holding the link.
+    process.stdout.write(await r.text());
+  },
+
+  async restore(argv) {
+    const { flags, positional } = parseFlags(argv);
+    const [slug, version] = positional;
+    if (!slug || !version) throw new Error('Usage: qhs restore <slug> <version>');
+    const creds = await versionCredentials(slug, flags['edit-token']);
+    const r = await call(
+      '/api/share/' +
+        encodeURIComponent(slug) +
+        '/versions/' +
+        encodeURIComponent(version) +
+        '/restore',
+      credentialInit(creds),
+    );
+    console.log(JSON.stringify(r, null, 2));
+  },
+
+  async 'sync-code'(argv) {
+    const { positional } = parseFlags(argv);
+    const code = positional[0];
+    if (!code || !/^qhsk_[A-Za-z0-9_-]{43}$/.test(code)) {
+      throw new Error('Usage: qhs sync-code <qhsk_...>');
+    }
+    await saveSyncKey(code);
+    console.log(
+      JSON.stringify(
+        { ok: true, storedAt: STORE_PATH, note: 'Version history now works for shares from your other machines.' },
+        null,
+        2,
+      ),
+    );
+  },
 };
 
 // ---------- entry -------------------------------------------------------------
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (!cmd || !commands[cmd]) {
-  console.error('Usage: qhs <share|edit|delete|stats|list> [args]');
+  console.error('Usage: qhs <share|edit|delete|stats|list|versions|preview|restore|sync-code> [args]');
   console.error('');
   console.error('  qhs share <file|->              [--title="label"]');
   console.error('  qhs edit <slug> <file|->        [--edit-token=...]');
   console.error('  qhs delete <slug>               [--edit-token=...]');
   console.error('  qhs stats <slug>');
   console.error('  qhs list');
+  console.error('  qhs versions <slug>             [--edit-token=...]');
+  console.error('  qhs preview <slug> <version>    [--edit-token=...]  # raw source, does not publish');
+  console.error('  qhs restore <slug> <version>    [--edit-token=...]');
+  console.error('  qhs sync-code <qhsk_...>        # once, for shares from other machines');
   process.exit(1);
 }
 

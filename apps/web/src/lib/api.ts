@@ -1,4 +1,11 @@
-import type { ClaimResponse, MySharesResponse, ShareStats, UploadResponse } from '@qhs/shared';
+import type {
+  ClaimResponse,
+  MySharesResponse,
+  RestoreResponse,
+  ShareStats,
+  UploadResponse,
+  VersionListResponse,
+} from '@qhs/shared';
 
 const API_BASE = (import.meta.env.PUBLIC_API_BASE as string | undefined) ?? '/api';
 
@@ -110,6 +117,77 @@ export async function deleteShare(
 export async function getStats(slug: string): Promise<ShareStats> {
   return call(`/share/${encodeURIComponent(slug)}/stats`, {
     method: 'GET',
+  });
+}
+
+/**
+ * Version endpoints take either credential. Exactly one is sent: a sync key
+ * goes in the Authorization header, an edit token in the body. Never both —
+ * the worker treats the bearer as authoritative and ignores a body token, so
+ * sending both would silently hide which one actually authorized the call.
+ */
+export type VersionCredentials = { editToken: string } | { syncKey: string };
+
+function credentialParts(creds: VersionCredentials): {
+  headers?: Record<string, string>;
+  body: string;
+} {
+  return 'syncKey' in creds
+    ? { headers: bearer(creds.syncKey), body: '{}' }
+    : { body: JSON.stringify({ editToken: creds.editToken }) };
+}
+
+export async function listVersions(
+  slug: string,
+  creds: VersionCredentials,
+): Promise<VersionListResponse> {
+  const { headers, body } = credentialParts(creds);
+  return call<VersionListResponse>(`/share/${encodeURIComponent(slug)}/versions`, {
+    method: 'POST',
+    headers,
+    body,
+  });
+}
+
+/**
+ * Returns the raw source of an old version as text, not rendered HTML — the
+ * point is to let the sender read a version before republishing it to everyone
+ * holding the link.
+ */
+export async function getVersionSource(
+  slug: string,
+  version: number,
+  creds: VersionCredentials,
+): Promise<string> {
+  const { headers, body } = credentialParts(creds);
+  const res = await fetch(`${API_BASE}/share/${encodeURIComponent(slug)}/versions/${version}/raw`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(headers ?? {}) },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: { error?: string; message?: string } = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Non-JSON error body; fall through to the generic message.
+    }
+    throw new ApiError(res.status, parsed.error ?? 'error', parsed.message ?? `HTTP ${res.status}`);
+  }
+  return res.text();
+}
+
+export async function restoreVersion(
+  slug: string,
+  version: number,
+  creds: VersionCredentials,
+): Promise<RestoreResponse> {
+  const { headers, body } = credentialParts(creds);
+  return call<RestoreResponse>(`/share/${encodeURIComponent(slug)}/versions/${version}/restore`, {
+    method: 'POST',
+    headers,
+    body,
   });
 }
 

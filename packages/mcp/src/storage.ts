@@ -9,8 +9,8 @@
 // would only race when they both call qhs_share within the same millisecond.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 export interface StoredShare {
   slug: string;
@@ -24,6 +24,13 @@ export interface StoredShare {
 interface Store {
   version: 1;
   shares: StoredShare[];
+  /**
+   * The user's sync code, if they have pasted one in. Lets version history and
+   * restore work for shares created on another machine, where this device has
+   * no edit token. Same file, same "stays on your machine" promise as the
+   * tokens — the server only ever sees its hash.
+   */
+  syncKey?: string;
 }
 
 const STORE_PATH = join(homedir(), '.qhs', 'shares.json');
@@ -76,6 +83,17 @@ export async function forgetShare(slug: string): Promise<void> {
 export async function listShares(): Promise<StoredShare[]> {
   const store = await loadStore();
   return store.shares;
+}
+
+export async function loadSyncKey(): Promise<string | null> {
+  const store = await loadStore();
+  return store.syncKey ?? null;
+}
+
+export async function saveSyncKey(syncKey: string): Promise<void> {
+  const store = await loadStore();
+  store.syncKey = syncKey;
+  await saveStore(store);
 }
 
 export const STORAGE_PATH = STORE_PATH;

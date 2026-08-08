@@ -24,6 +24,84 @@ export const UPLOAD_RATE_MAX_PER_WINDOW = 1;
 /** Minimum cleanup age for stale pending uploads. */
 export const PENDING_CLEANUP_AGE_SECONDS = 300; // 5 min
 
+// ---------- Version history ----------
+
+/**
+ * How many versions of a share survive. Older ones are pruned by the cleanup
+ * cron.
+ *
+ * 10 rather than 3-5 because a vibe coder revising a page five times in one
+ * afternoon would otherwise push out "yesterday's version" — which is exactly
+ * the thing version history exists to rescue. AI-generated HTML measures in
+ * the tens to low hundreds of KB, so 10 versions per share is cheap.
+ */
+export const RETENTION_VERSIONS = 10;
+
+/**
+ * Attempts `writeNewVersion` makes before giving up with a 409.
+ *
+ * Each attempt loses only to a concurrent writer that committed first, so
+ * three consecutive losses means sustained contention on one share — vanishing
+ * unlikely for a single-user tool, and retrying past that is worse than
+ * telling the user to press save again.
+ */
+export const VERSION_WRITE_MAX_ATTEMPTS = 3;
+
+/**
+ * Shares processed per retention sweep run. Anything beyond this waits for the
+ * next cron tick; the count skipped is logged rather than silently dropped.
+ */
+export const VERSION_SWEEP_MAX_SHARES = 50;
+
+/**
+ * Write rate limit for edit and restore, per IP.
+ *
+ * Restore is the reason this exists: a tiny request makes the server copy a
+ * whole object, so a loop can inflate storage far faster than uploading could,
+ * and retention caps steady-state size but not a burst. Edit rides along
+ * because it had no limit at all — the 1 MB body was its only brake.
+ *
+ * Generous on purpose. Someone iterating on a page saves every few seconds;
+ * this only stops scripts.
+ */
+export const WRITE_RATE_LIMIT_PERIOD_SECONDS = 60; // binding accepts 10 or 60
+export const WRITE_RATE_LIMIT_PER_IP = 30;
+
+export interface VersionEntry {
+  version: number;
+  /** ISO; from R2's `uploaded`, not a separately stored timestamp. */
+  createdAt: string;
+  contentSize: number;
+}
+
+export interface VersionListResponse {
+  slug: string;
+  latestVersion: number;
+  /** Descending by version. At most RETENTION_VERSIONS entries. */
+  versions: VersionEntry[];
+}
+
+export interface RestoreResponse {
+  slug: string;
+  restoredFrom: number;
+  newVersion: number;
+}
+
+/**
+ * How long a view row keeps its raw `ua` and `referrer`.
+ *
+ * These are the only free-text, viewer-attributable fields we store (the IP is
+ * already salted+hashed on write). Retaining them forever has no product
+ * value — nobody asks where traffic came from six months later — and turns a
+ * view log into an indefinite behavioural record. After the window a sweep
+ * nulls both columns; the row itself survives so historical view counts don't
+ * silently change.
+ *
+ * The referrer breakdown is scoped to the same window, so anonymized rows
+ * can't quietly reappear as 'direct'.
+ */
+export const VIEW_PII_RETENTION_SECONDS = 90 * 24 * 60 * 60; // 90 days
+
 /**
  * Sync key ("sync code") = `qhsk_` + base64url-encoded 32 random bytes
  * (43 chars, no padding) → 256 bits of entropy. Client-generated; the server
@@ -60,11 +138,74 @@ export interface EditRequest {
   editToken: string;
 }
 
+/**
+ * How many referrer sources GET /api/share/:slug/stats returns. Everything
+ * past the cut is folded into a single 'other' bucket so the totals still
+ * reconcile against `views` — a truncated list that silently loses views
+ * reads as a bug to anyone who adds up the numbers.
+ */
+export const STATS_TOP_REFERRERS = 5;
+
+/**
+ * Length of the daily view trend returned by the stats endpoint. Bounded so
+ * the response stays a fixed size no matter how old or busy a share is.
+ */
+export const STATS_TREND_DAYS = 30;
+
+export interface DailyViewStat {
+  /** UTC calendar day, `YYYY-MM-DD`. */
+  date: string;
+  views: number;
+}
+
+export interface ReferrerStat {
+  /**
+   * Hostname with any leading `www.` stripped, or one of two synthetic
+   * buckets: 'direct' (no Referer header — typed URL, bookmark, most native
+   * apps) and 'other' (unparseable referrer, plus the long tail past
+   * STATS_TOP_REFERRERS).
+   *
+   * Only the hostname is exposed, never path or query — the raw Referer of a
+   * private page is itself sensitive, and the host is all the sender needs to
+   * know where traffic came from.
+   */
+  source: string;
+  views: number;
+}
+
 export interface ShareStats {
   slug: string;
   createdAt: string; // ISO
   views: number;
+  /**
+   * Distinct salted IP hashes. Always <= views. This is an approximation by
+   * construction: NAT/CGNAT collapses separate people into one hash, and a
+   * viewer on a rotating mobile IP counts more than once.
+   */
+  uniqueViewers: number;
+  /**
+   * Views from crawlers and chat-app link unfurlers, excluded from `views`.
+   * Reported rather than hidden: "Slack previewed it twice, nobody opened it"
+   * is a real answer to "did anyone see my share", and a bare 0 is not.
+   */
+  botViews: number;
   lastViewedAt: string | null;
+  /**
+   * Descending by views, at most STATS_TOP_REFERRERS + 1 entries. Covers only
+   * the last VIEW_PII_RETENTION_SECONDS — older rows have had their referrer
+   * stripped, so counting them would just pad 'direct'. This means the
+   * referrer views can sum to less than `views` on an old share.
+   */
+  referrers: ReferrerStat[];
+  /**
+   * Human views per UTC day for the last STATS_TREND_DAYS, oldest first,
+   * including zero-view days. Gaps are filled server-side so a client can
+   * render it directly without reconstructing the calendar.
+   *
+   * UTC, not the viewer's or sender's local time: the bucket has to be stable
+   * for everyone reading the same share.
+   */
+  dailyViews: DailyViewStat[];
   deleted: boolean;
 }
 
@@ -138,6 +279,12 @@ export interface ShareRow {
   client: ClientChannel;
   owner_key_hash: string | null; // sha256(sync key); NULL = unclaimed
   owner_claimed_at: number | null;
+  /** Highest existing version. Monotonic — restore appends, never rewinds. */
+  latest_version: number;
+  /** Oldest version the retention sweep kept; makes the sweep converge. */
+  versions_pruned_below: number;
+  /** Unix seconds a writer last stranded an object by losing its CAS. */
+  orphan_since: number | null;
   vault_ciphertext: string | null; // v2 placeholder
   vault_updated_at: number | null; // v2 placeholder
 }
@@ -149,6 +296,7 @@ export interface ViewRow {
   ip_hash: string;
   ua: string | null;
   referrer: string | null;
+  is_bot: 0 | 1;
 }
 
 export interface ReportRow {
