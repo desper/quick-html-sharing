@@ -1,5 +1,5 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
-import type { RestoreResponse, VersionListResponse } from '@qhs/shared';
+import { MAX_HTML_BYTES, type RestoreResponse, type VersionListResponse } from '@qhs/shared';
 import { describe, expect, it } from 'vitest';
 import { writeNewVersion } from '../src/lib/versions';
 import worker from '../src/index';
@@ -241,6 +241,33 @@ describe('POST /api/share/:slug/versions/:v/restore', () => {
     expect(await objectText(`shares/${slug}/v2.html`)).toContain('Second');
     expect(await objectText(`shares/${slug}/v3.html`)).toContain('Third');
     expect(await latestVersion(slug)).toBe(4);
+  });
+
+  it('restores a version sitting on the size limit', async () => {
+    // The upload cap is the only thing bounding how big a stored version can
+    // be, and restore is the one path that reads a whole version back into the
+    // worker and writes it out again. A share right at the cap is therefore the
+    // worst case the feature ever has to survive — and it is reachable by any
+    // user, not just an adversarial one.
+    const filler = 'x'.repeat(MAX_HTML_BYTES - 64);
+    const huge = `<!doctype html><html><body><p>${filler}</p></body></html>`;
+    expect(new TextEncoder().encode(huge).byteLength).toBeLessThanOrEqual(MAX_HTML_BYTES);
+
+    const { slug, editToken } = await uploadParsed(huge, `198.51.100.${ipCounter++}`);
+    await edit(slug, '<p>tiny</p>', editToken);
+
+    const res = await versionsFetch(`/api/share/${slug}/versions/1/restore`, { editToken });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as RestoreResponse).toMatchObject({ newVersion: 3 });
+
+    // The bytes came back whole, and content_size describes what was actually
+    // written — a truncated copy would still "succeed" without this check.
+    const restored = await objectText(`shares/${slug}/v3.html`);
+    expect(restored).toBe(huge);
+    const row = await env.DB.prepare(`SELECT content_size FROM shares WHERE slug = ?`)
+      .bind(slug)
+      .first<{ content_size: number }>();
+    expect(row?.content_size).toBe(new TextEncoder().encode(huge).byteLength);
   });
 
   it('is itself reversible', async () => {
