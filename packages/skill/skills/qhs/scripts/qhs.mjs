@@ -9,7 +9,7 @@
 // for internal dev only — intentionally undocumented in SKILL.md so end users
 // don't bypass the hosted service.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -33,9 +33,15 @@ async function loadStore() {
   }
 }
 
+// Atomic + owner-only, for the same reason as the MCP package: this file now
+// holds the account-wide sync key, not just per-share edit tokens. A loose
+// umask would expose every share the user owns to other local accounts, and a
+// crash mid-overwrite would truncate the JSON and take the key with it.
 async function saveStore(store) {
-  await mkdir(dirname(STORE_PATH), { recursive: true });
-  await writeFile(STORE_PATH, JSON.stringify(store, null, 2) + '\n', 'utf8');
+  await mkdir(dirname(STORE_PATH), { recursive: true, mode: 0o700 });
+  const tmp = `${STORE_PATH}.${process.pid}.tmp`;
+  await writeFile(tmp, JSON.stringify(store, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  await rename(tmp, STORE_PATH);
 }
 
 async function rememberShare(share) {
@@ -151,9 +157,17 @@ const commands = {
   async share(argv) {
     const { flags, positional } = parseFlags(argv);
     const html = await readHtmlArg(positional[0]);
+    // Enrol at creation time when a sync code is saved. Without the bearer the
+    // server stores owner_key_hash = NULL, and the share is then unreachable by
+    // sync key from any other machine — `qhs versions` there would 403 forever
+    // even though the same code was pasted on both.
+    const syncKey = await loadSyncKey();
     const r = await call('/api/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(syncKey ? { Authorization: `Bearer ${syncKey}` } : {}),
+      },
       body: JSON.stringify({ html }),
     });
     await rememberShare({

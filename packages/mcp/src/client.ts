@@ -59,10 +59,23 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
   return (await r.json()) as T;
 }
 
-export function uploadHtml(html: string): Promise<UploadResult> {
+/**
+ * Uploads HTML. Pass the saved sync key to enrol the share as you create it.
+ *
+ * Without the bearer the server stores `owner_key_hash = NULL`, and a share
+ * that was never enrolled cannot be reached by sync key from anywhere — so
+ * version history and restore silently stop working on the user's other
+ * machines even though the sync code was saved on both. The web uploader has
+ * always sent it; the agent integrations did not, which made the cross-device
+ * story true for the dashboard and false for MCP and the skill.
+ */
+export function uploadHtml(html: string, syncKey?: string | null): Promise<UploadResult> {
   return call<UploadResult>('/api/upload', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(syncKey ? { Authorization: `Bearer ${syncKey}` } : {}),
+    },
     body: JSON.stringify({ html }),
   });
 }

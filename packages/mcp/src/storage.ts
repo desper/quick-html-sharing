@@ -8,7 +8,7 @@
 // realistic concurrency is "user runs MCP and skill at the same time", which
 // would only race when they both call qhs_share within the same millisecond.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -53,9 +53,21 @@ async function loadStore(): Promise<Store> {
   }
 }
 
+/**
+ * Writes the store atomically, owner-readable only.
+ *
+ * Both properties matter more since the sync key moved in here. The key is an
+ * account-wide credential, not one share's token: a permissive umask would hand
+ * every share the user owns to any other local account, and a crash midway
+ * through a plain overwrite would leave truncated JSON that takes the key and
+ * every stored edit token with it. Write to a temp file, then rename — rename
+ * is atomic, so a reader sees either the old file or the new one.
+ */
 async function saveStore(store: Store): Promise<void> {
-  await mkdir(dirname(STORE_PATH), { recursive: true });
-  await writeFile(STORE_PATH, JSON.stringify(store, null, 2) + '\n', 'utf8');
+  await mkdir(dirname(STORE_PATH), { recursive: true, mode: 0o700 });
+  const tmp = `${STORE_PATH}.${process.pid}.tmp`;
+  await writeFile(tmp, JSON.stringify(store, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  await rename(tmp, STORE_PATH);
 }
 
 export async function rememberShare(share: StoredShare): Promise<void> {
