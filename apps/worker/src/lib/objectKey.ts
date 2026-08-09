@@ -40,9 +40,15 @@ export function versionPrefix(slug: string): string {
  * bucket is ours, but it is also editable by hand from the Cloudflare
  * dashboard, and one stray object should not put NaN into a version list or
  * offer an unrestorable entry.
+ *
+ * The pattern rejects leading zeros deliberately. `\d+` would read `v007.html`
+ * as version 7 — a key this module never writes, so it can only have arrived by
+ * hand, yet the sweep would treat it as the real v7 and delete it against the
+ * retention cut. Refusing to recognise it keeps the promise the sweep makes
+ * elsewhere: it only removes objects it knows it produced.
  */
 export function versionFromKey(key: string): number | null {
-  const digits = /\/v(\d+)\.html$/.exec(key)?.[1];
+  const digits = /\/v([1-9]\d*)\.html$/.exec(key)?.[1];
   if (digits === undefined) return null;
   const version = Number.parseInt(digits, 10);
   return Number.isSafeInteger(version) && version >= 2 ? version : null;
