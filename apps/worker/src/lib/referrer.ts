@@ -44,14 +44,37 @@ export function normalizeReferrer(raw: string | null | undefined): string | null
   }
 }
 
+/** A bare hostname: dot-separated LDH labels, no scheme, no path, no spaces. */
+const BARE_HOSTNAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i;
+
+/** Anything starting with `scheme:` is a URL we should parse. */
+const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
 /**
  * The label shown for a stored value.
  *
- * Still normalises rather than passing the value through, because rows written
- * before `normalizeReferrer` existed hold full URLs.
+ * A stored value is one of three shapes, and the difference matters:
+ *
+ *   1. a bare hostname — written by `normalizeReferrer`, i.e. every current row
+ *   2. a full URL      — written before normalization existed
+ *   3. raw junk        — same era; the old path stored the header verbatim
+ *
+ * Only (2) may go back through `normalizeReferrer`. Passing (1) to it fails in
+ * a way that looks like success: `new URL('example.com')` throws for want of a
+ * scheme, the catch branch labels it 'other', and *every* row written since
+ * normalization landed reports as 'other'. Production showed exactly that —
+ * `news.ycombinator.com` was stored correctly and displayed as 'other'.
+ *
+ * The unit tests missed it because they seeded full URLs straight into D1,
+ * which only ever exercised shape (2). Both halves were right about their own
+ * format and wrong about each other's, so testing them separately could not
+ * catch it — see the round-trip test through the real share renderer.
  */
 export function referrerSource(stored: string | null): string {
   if (!stored) return 'direct';
   if (stored === 'other') return 'other';
-  return normalizeReferrer(stored) ?? 'direct';
+  if (HAS_SCHEME.test(stored)) return normalizeReferrer(stored) ?? 'direct';
+  // Already the bucket. Junk from the legacy era keeps the 'other' label, which
+  // is where it would have landed had it been written through normalization.
+  return BARE_HOSTNAME.test(stored) ? stored.slice(0, MAX_REFERRER_LENGTH) : 'other';
 }

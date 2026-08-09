@@ -215,6 +215,37 @@ describe('stats bot filtering', () => {
 });
 
 describe('stats referrer breakdown', () => {
+  // Every other test in this describe seeds `views` directly, which writes the
+  // pre-normalization shape (a full URL) and therefore only ever exercised the
+  // read path's legacy branch. That blind spot shipped: the write path stores a
+  // bare hostname, the read path fed it back to a URL parser that requires a
+  // scheme, and production reported every real referrer as 'other'.
+  //
+  // This one goes through the actual renderer instead, so the two halves have to
+  // agree on the stored format. That is the whole point — no amount of testing
+  // either half alone can catch a disagreement between them.
+  it('round-trips a real Referer header through the renderer into the breakdown', async () => {
+    const slug = await createShare();
+    const browser = { 'User-Agent': 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/140.0' };
+
+    for (const referer of [
+      'https://news.ycombinator.com/item?id=123456',
+      'https://www.reddit.com/r/webdev/comments/abc/',
+    ]) {
+      const res = await shareFetch(`/${slug}`, { headers: { ...browser, Referer: referer } });
+      expect(res.status).toBe(200);
+    }
+    const direct = await shareFetch(`/${slug}`, { headers: browser });
+    expect(direct.status).toBe(200);
+
+    const s = await getStats(slug);
+    expect(s.referrers).toEqual([
+      { source: 'direct', views: 1 },
+      { source: 'news.ycombinator.com', views: 1 },
+      { source: 'reddit.com', views: 1 },
+    ]);
+  });
+
   it('groups by hostname, folding www and dropping path/query', async () => {
     const slug = await createShare();
     await seedView(slug, { referrer: 'https://www.google.com/search?q=secret+query' });
@@ -304,7 +335,16 @@ describe('stats referrer breakdown', () => {
 
   it('emits a single other bucket when unparseable referrers already rank top', async () => {
     const slug = await createShare();
-    for (let n = 0; n < 10; n++) await seedView(slug, { referrer: 'garbage' });
+    // The junk has to be junk under both storage eras, which is why it has a
+    // space in it. A stored value with no scheme is ambiguous: written before
+    // normalization it means "raw header we could not parse", written after it
+    // means "already-normalized hostname". Nothing in the row distinguishes
+    // them, so `referrerSource` has to pick an era — and it picks the current
+    // one, because those rows are every future row while the legacy ones expire
+    // when the retention sweep nulls them. A single-token value like 'garbage'
+    // therefore reads back as itself now, and 'localhost' survives as a source
+    // instead of collapsing into 'other'.
+    for (let n = 0; n < 10; n++) await seedView(slug, { referrer: 'not a url at all' });
     // 6 single-view hosts: 5 fill the remaining top slots, 1 falls to the tail.
     for (const host of ['a', 'b', 'c', 'd', 'e', 'f']) {
       await seedView(slug, { referrer: `https://${host}.example/` });
