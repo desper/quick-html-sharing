@@ -214,6 +214,16 @@ import Base from '../layouts/Base.astro';
       stats.textContent = 'stats';
       actions.append(stats);
 
+      // Versions works from any device: the page falls back to the sync key
+      // when no edit token is present. This is the cross-device rescue path —
+      // without this link the owner-key branch of the versions API would have
+      // no way in from here, which is the whole reason it exists.
+      const versions = document.createElement('a');
+      versions.className = 'muted';
+      versions.href = `/versions?slug=${encodeURIComponent(item.slug)}`;
+      versions.textContent = 'versions';
+      actions.append(versions);
+
       // D19: edit only when this device holds the slug's edit token.
       if (recent && editToken) {
         const edit = document.createElement('button');

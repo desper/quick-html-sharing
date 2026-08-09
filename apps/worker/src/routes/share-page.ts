@@ -1,10 +1,12 @@
-import { Hono, type Context } from 'hono';
 import type { ShareRow } from '@qhs/shared';
-import type { AppEnv } from '../types';
-import { sharePageSecurityHeaders } from '../middleware/security-headers';
-import { htmlObjectKey } from './upload';
+import { type Context, Hono } from 'hono';
+import { isBotUserAgent } from '../lib/bot';
 import { hashIp } from '../lib/hash';
 import { getClientIp } from '../lib/ip';
+import { htmlObjectKey } from '../lib/objectKey';
+import { normalizeReferrer } from '../lib/referrer';
+import { sharePageSecurityHeaders } from '../middleware/security-headers';
+import type { AppEnv } from '../types';
 
 /**
  * GET /:slug — serves user-uploaded HTML on the share subdomain.
@@ -23,7 +25,7 @@ sharePageRoute.get('/:slug', sharePageSecurityHeaders, async (c) => {
 
   const row = await c.env.DB.prepare(
     `SELECT slug, status, edit_token_hash, created_at, committed_at, deleted_at,
-            sender_ip_hash, content_size
+            sender_ip_hash, content_size, latest_version
      FROM shares WHERE slug = ?`,
   )
     .bind(slug)
@@ -37,7 +39,10 @@ sharePageRoute.get('/:slug', sharePageSecurityHeaders, async (c) => {
   c.executionCtx.waitUntil(recordView(c, slug));
 
   // ---- fetch HTML from R2 ----
-  const obj = await c.env.HTML_BUCKET.get(htmlObjectKey(slug));
+  // The share URL always serves the newest version. `latest_version` rides
+  // along on the SELECT above, so this costs no extra query and no extra R2
+  // call: the hot path is exactly as expensive as it was before versioning.
+  const obj = await c.env.HTML_BUCKET.get(htmlObjectKey(slug, row.latest_version));
   if (!obj) {
     // Metadata says committed but R2 doesn't have the body. Should not happen
     // unless someone manually deleted from R2. Fail loud rather than silent.
@@ -54,11 +59,17 @@ async function recordView(c: Context<AppEnv>, slug: string) {
     const ipHash = await hashIp(getClientIp(c), c.env.IP_HASH_SALT);
     const now = Math.floor(Date.now() / 1000);
     const ua = c.req.header('User-Agent') ?? null;
-    const referrer = c.req.header('Referer') ?? null;
+    // Normalised here, not in the stats query. The header is attacker-supplied
+    // and unbounded; storing it raw let anyone with the share URL create
+    // unlimited GROUP BY rows. See lib/referrer.ts.
+    const referrer = normalizeReferrer(c.req.header('Referer'));
+    // Classified at write time, not at read time: the UA is only meaningful
+    // here, and a stored flag keeps the stats query a plain indexed filter.
+    const isBot = isBotUserAgent(ua) ? 1 : 0;
     await c.env.DB.prepare(
-      `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot) VALUES (?, ?, ?, ?, ?, ?)`,
     )
-      .bind(slug, now, ipHash, ua, referrer)
+      .bind(slug, now, ipHash, ua, referrer, isBot)
       .run();
   } catch {
     // View tracking is best-effort. Failing here must not break HTML delivery.

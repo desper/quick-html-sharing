@@ -1,11 +1,12 @@
+import { type ClientChannel, MAX_HTML_BYTES, type UploadResponse } from '@qhs/shared';
 import { Hono } from 'hono';
-import { MAX_HTML_BYTES, type ClientChannel, type UploadResponse } from '@qhs/shared';
-import type { AppEnv } from '../types';
+import { sha256Hex } from '../lib/hash';
+import { htmlObjectKey } from '../lib/objectKey';
 import { generateSlug } from '../lib/slug';
 import { generateEditToken } from '../lib/tokens';
-import { sha256Hex } from '../lib/hash';
 import { uploadRateLimit } from '../middleware/rate-limit';
 import { syncKeyOptional } from '../middleware/sync-key';
+import type { AppEnv } from '../types';
 
 /**
  * Classifies the requesting client from its User-Agent header so we can later
@@ -53,9 +54,7 @@ uploadRoute.post('/upload', uploadRateLimit, syncKeyOptional, async (c) => {
   const contentType = c.req.header('Content-Type') ?? '';
   let html: string;
   if (contentType.includes('application/json')) {
-    const body = await c.req
-      .json<{ html?: unknown }>()
-      .catch(() => ({}) as { html?: unknown });
+    const body = await c.req.json<{ html?: unknown }>().catch(() => ({}) as { html?: unknown });
     if (typeof body.html !== 'string' || body.html.length === 0) {
       return c.json({ error: 'bad_request', message: 'Missing html string in body.' }, 400);
     }
@@ -110,7 +109,16 @@ uploadRoute.post('/upload', uploadRateLimit, syncKeyOptional, async (c) => {
         `INSERT INTO shares (slug, status, edit_token_hash, created_at, sender_ip_hash, content_size, client, owner_key_hash, owner_claimed_at)
          VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
       )
-        .bind(candidate, editTokenHash, now, senderIpHash, byteLength, client, ownerKeyHash, ownerClaimedAt)
+        .bind(
+          candidate,
+          editTokenHash,
+          now,
+          senderIpHash,
+          byteLength,
+          client,
+          ownerKeyHash,
+          ownerClaimedAt,
+        )
         .run();
       slug = candidate;
       pendingInserted = true;
@@ -121,23 +129,19 @@ uploadRoute.post('/upload', uploadRateLimit, syncKeyOptional, async (c) => {
     }
   }
   if (!pendingInserted) {
-    return c.json(
-      { error: 'internal', message: 'Could not generate unique slug, retry.' },
-      500,
-    );
+    return c.json({ error: 'internal', message: 'Could not generate unique slug, retry.' }, 500);
   }
 
   // ---- R2 write ----
   try {
-    await c.env.HTML_BUCKET.put(htmlObjectKey(slug), html, {
+    // Explicit v1: an upload is always the first version, and the key helper
+    // takes no default so this can never silently land on the wrong object.
+    await c.env.HTML_BUCKET.put(htmlObjectKey(slug, 1), html, {
       httpMetadata: { contentType: 'text/html; charset=utf-8' },
     });
   } catch (err) {
     // R2 failed — leave pending row for cleanup, surface 502 to caller.
-    return c.json(
-      { error: 'storage_failed', message: 'Could not store HTML, please retry.' },
-      502,
-    );
+    return c.json({ error: 'storage_failed', message: 'Could not store HTML, please retry.' }, 502);
   }
 
   // ---- commit ----
@@ -156,11 +160,6 @@ uploadRoute.post('/upload', uploadRateLimit, syncKeyOptional, async (c) => {
   };
   return c.json(body, 201);
 });
-
-/** Where uploaded HTML lives in R2. */
-export function htmlObjectKey(slug: string): string {
-  return `shares/${slug}.html`;
-}
 
 function looksLikeHtml(input: string): boolean {
   // Accept anything containing an HTML-ish tag in the first 4KB.

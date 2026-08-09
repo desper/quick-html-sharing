@@ -7,9 +7,10 @@
   "scripts": {
     "dev": "wrangler dev --env api",
     "dev:e2e": "wrangler d1 execute quick-html-sharing --local --env api --file=db/schema.sql && wrangler dev --env api --port 8787",
+    "dev:share": "wrangler dev --env share --port 8788",
     "deploy:api": "wrangler deploy --env api",
     "deploy:share": "wrangler deploy --env share",
-    "deploy": "bun run deploy:api && bun run deploy:share",
+    "deploy": "bun run deploy:share && bun run deploy:api",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

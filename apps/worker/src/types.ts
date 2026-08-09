@@ -22,6 +22,8 @@ export interface Bindings {
    */
   MY_SHARES_RATE_LIMIT_IP?: RateLimit;
   MY_SHARES_RATE_LIMIT_KEY?: RateLimit;
+  /** Same deal for the version-creating writes (edit, restore). */
+  WRITE_RATE_LIMIT_IP?: RateLimit;
 }
 
 export interface Variables {

@@ -24,7 +24,11 @@ import Base from '../layouts/Base.astro';
     <p class="success" id="success-msg" hidden></p>
   </section>
 
-  <p class="muted" style="margin-top: 24px"><a href="/">&larr; Back</a></p>
+  <p class="muted" style="margin-top: 24px">
+    <a id="versions-link" href="#">Version history &rarr;</a>
+    <span aria-hidden="true"> · </span>
+    <a href="/">&larr; Back</a>
+  </p>
 
   <script>
     import { editHtml, deleteShare, ApiError } from '../lib/api';
@@ -44,12 +48,18 @@ import Base from '../layouts/Base.astro';
     const errorMsg = document.getElementById('error-msg') as HTMLElement;
     const successMsg = document.getElementById('success-msg') as HTMLElement;
 
+    const versionsLink = document.getElementById('versions-link') as HTMLAnchorElement;
+
     if (!slug || !editToken) {
       slugLine.textContent = 'Missing slug or edit token in URL.';
       saveBtn.disabled = true;
       deleteBtn.disabled = true;
+      versionsLink.hidden = true;
     } else {
       slugLine.textContent = slug;
+      // The token rides across in the fragment, same as it arrived here: query
+      // strings end up in server logs, fragments do not.
+      versionsLink.href = `/versions?slug=${encodeURIComponent(slug)}#edit=${encodeURIComponent(editToken)}`;
     }
 
     function fmtBytes(n: number) {

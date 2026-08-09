@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { dashboardSecurityHeaders } from './middleware/security-headers';
-import { cleanupStalePending } from './routes/cleanup';
+import { anonymizeOldViews, cleanupStalePending, pruneOldVersions } from './routes/cleanup';
 import { editRoute } from './routes/edit';
 import { mySharesRoute } from './routes/my-shares';
 import { reportRoute } from './routes/report';
 import { sharePageRoute } from './routes/share-page';
 import { statsRoute } from './routes/stats';
 import { uploadRoute } from './routes/upload';
+import { versionsRoute } from './routes/versions';
 import type { AppEnv, Bindings } from './types';
 
 /**
@@ -58,6 +59,7 @@ dashboardApp.route('/api', editRoute);
 dashboardApp.route('/api', mySharesRoute);
 dashboardApp.route('/api', reportRoute);
 dashboardApp.route('/api', statsRoute);
+dashboardApp.route('/api', versionsRoute);
 
 dashboardApp.get('/api/health', (c) => c.json({ ok: true, host: 'dashboard' }));
 dashboardApp.notFound((c) => c.json({ error: 'not_found' }, 404));
@@ -99,6 +101,22 @@ export default {
    *   crons = ["*\/10 * * * *"]
    */
   async scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext) {
-    ctx.waitUntil(cleanupStalePending(env).then(() => undefined));
+    // Both sweeps ride the same 10-minute trigger. The retention sweep only
+    // has work to do once a day at most, and its partial index is empty the
+    // rest of the time, so the extra runs cost a single empty index probe.
+    ctx.waitUntil(
+      Promise.all([
+        cleanupStalePending(env),
+        anonymizeOldViews(env),
+        pruneOldVersions(env).then((result) => {
+          // Never let a capped run read as a completed one.
+          if (result.skipped > 0) {
+            console.log(
+              `version sweep: pruned ${result.pruned} objects, ${result.skipped} shares deferred to the next run`,
+            );
+          }
+        }),
+      ]).then(() => undefined),
+    );
   },
 } satisfies ExportedHandler<Bindings>;

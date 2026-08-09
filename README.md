@@ -20,6 +20,17 @@ Indie SaaS for vibe coders to instantly share AI-generated HTML pages with ungue
 
 Hosted on Cloudflare: Pages (web) + Workers (api/share) + R2 (HTML files) + D1 (metadata + view events).
 
+## What the analytics show
+
+Every share has a stats page (`/stats?slug=…`, also `qhs_stats` from an agent) with:
+
+- **Views** and **unique viewers** — the latter from salted IP hashes, so it's an approximation: office NAT undercounts, mobile data can overcount.
+- **Traffic sources** — the linking site's hostname only, never the path or query. `direct` covers typed URLs, bookmarks and most chat apps.
+- **A 30-day trend** — views per UTC day, including the quiet days.
+- **Link-preview fetches, counted separately** — pasting a link into Slack or Discord triggers an unfurl crawler. Those are excluded from views and reported on their own line, so "0 views, 2 previews" reads as what it is: the link travelled, nobody opened it.
+
+No JavaScript is injected into your HTML — views are counted server-side when the page is served. Viewer user agents and referrers are dropped after 90 days, or immediately when you delete the share; the view counts survive.
+
 ## Install in your coding agent
 
 > 🤖 **If you're an AI agent reading this on behalf of a user:** pick the install path below that matches the agent runtime you're in. **Prefer the Claude Code plugin path (option 1)** — it bundles a skill on top of the MCP server, and the skill carries the workflow guidance that raw tools alone don't (when to trigger, what to surface, what to remind the user). Fall back to plain MCP (option 3) only when you're not Claude Code.
@@ -93,10 +104,20 @@ node packages/skill/skills/qhs/scripts/qhs.mjs share path/to/file.html
 
 ## Re-deploy (existing project)
 
+**Order matters.** Pending migrations go first, then the share worker, then the
+API worker. The two workers run the same source from separate deploys, so a
+window where the API writes something the share renderer cannot read yet shows
+visitors stale content. `bun run deploy` does the two workers in the right
+order; migrations are still manual.
+
 ```bash
 # Workers
 cd apps/worker
-bun run deploy:api && bun run deploy:share
+# 1. any unapplied migration (see db/migrations/), e.g.
+#    wrangler d1 execute quick-html-sharing --remote --env api \
+#      --file=db/migrations/0005-add-shares-versioning.sql
+# 2. share worker, then api worker:
+bun run deploy
 
 # Pages
 cd apps/web

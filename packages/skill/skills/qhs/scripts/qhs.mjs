@@ -9,7 +9,7 @@
 // for internal dev only — intentionally undocumented in SKILL.md so end users
 // don't bypass the hosted service.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -33,9 +33,15 @@ async function loadStore() {
   }
 }
 
+// Atomic + owner-only, for the same reason as the MCP package: this file now
+// holds the account-wide sync key, not just per-share edit tokens. A loose
+// umask would expose every share the user owns to other local accounts, and a
+// crash mid-overwrite would truncate the JSON and take the key with it.
 async function saveStore(store) {
-  await mkdir(dirname(STORE_PATH), { recursive: true });
-  await writeFile(STORE_PATH, JSON.stringify(store, null, 2) + '\n', 'utf8');
+  await mkdir(dirname(STORE_PATH), { recursive: true, mode: 0o700 });
+  const tmp = `${STORE_PATH}.${process.pid}.tmp`;
+  await writeFile(tmp, JSON.stringify(store, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  await rename(tmp, STORE_PATH);
 }
 
 async function rememberShare(share) {
@@ -55,6 +61,54 @@ async function forgetShare(slug) {
   const store = await loadStore();
   store.shares = store.shares.filter((s) => s.slug !== slug);
   await saveStore(store);
+}
+
+async function loadSyncKey() {
+  const store = await loadStore();
+  return store.syncKey ?? null;
+}
+
+async function saveSyncKey(syncKey) {
+  const store = await loadStore();
+  store.syncKey = syncKey;
+  await saveStore(store);
+}
+
+/**
+ * Picks whichever credential this machine has for a share.
+ *
+ * Edit token first — it is share-specific. The sync code is the fallback that
+ * makes version history work for shares created on another machine, which is
+ * the case where it matters most.
+ */
+async function versionCredentials(slug, editTokenFlag) {
+  const token = editTokenFlag ?? (await findShare(slug))?.editToken;
+  if (token) return { editToken: token };
+  const syncKey = await loadSyncKey();
+  if (syncKey) return { syncKey };
+  throw new Error(
+    `No credential for "${slug}" on this machine. Pass --edit-token=<value>, or run ` +
+      `"qhs sync-code <qhsk_...>" once so shares from your other machines work here.`,
+  );
+}
+
+/**
+ * Version endpoints are POST so the edit token can travel in a body — URLs end
+ * up in server logs. Exactly one credential is sent; the server treats a bearer
+ * as authoritative and ignores a body token.
+ */
+function credentialInit(creds) {
+  return creds.syncKey
+    ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.syncKey}` },
+        body: '{}',
+      }
+    : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editToken: creds.editToken }),
+      };
 }
 
 // ---------- http client -------------------------------------------------------
@@ -103,9 +157,17 @@ const commands = {
   async share(argv) {
     const { flags, positional } = parseFlags(argv);
     const html = await readHtmlArg(positional[0]);
+    // Enrol at creation time when a sync code is saved. Without the bearer the
+    // server stores owner_key_hash = NULL, and the share is then unreachable by
+    // sync key from any other machine — `qhs versions` there would 403 forever
+    // even though the same code was pasted on both.
+    const syncKey = await loadSyncKey();
     const r = await call('/api/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(syncKey ? { Authorization: `Bearer ${syncKey}` } : {}),
+      },
       body: JSON.stringify({ html }),
     });
     await rememberShare({
@@ -171,19 +233,87 @@ const commands = {
     const store = await loadStore();
     console.log(JSON.stringify({ shares: store.shares }, null, 2));
   },
+
+  async versions(argv) {
+    const { flags, positional } = parseFlags(argv);
+    const slug = positional[0];
+    if (!slug) throw new Error('Usage: qhs versions <slug>');
+    const creds = await versionCredentials(slug, flags['edit-token']);
+    const r = await call(
+      '/api/share/' + encodeURIComponent(slug) + '/versions',
+      credentialInit(creds),
+    );
+    console.log(JSON.stringify(r, null, 2));
+  },
+
+  async preview(argv) {
+    const { flags, positional } = parseFlags(argv);
+    const [slug, version] = positional;
+    if (!slug || !version) throw new Error('Usage: qhs preview <slug> <version>');
+    const creds = await versionCredentials(slug, flags['edit-token']);
+    const init = credentialInit(creds);
+    const path =
+      '/api/share/' + encodeURIComponent(slug) + '/versions/' + encodeURIComponent(version) + '/raw';
+    const r = await fetch(`${ENDPOINT}${path}`, {
+      ...init,
+      headers: { 'User-Agent': USER_AGENT, ...init.headers },
+    });
+    if (!r.ok) {
+      throw new Error(`qhs POST ${path} → ${r.status}: ${await r.text().catch(() => '')}`);
+    }
+    // Raw source on stdout, not JSON — the point is to read it before deciding
+    // whether to republish it to everyone holding the link.
+    process.stdout.write(await r.text());
+  },
+
+  async restore(argv) {
+    const { flags, positional } = parseFlags(argv);
+    const [slug, version] = positional;
+    if (!slug || !version) throw new Error('Usage: qhs restore <slug> <version>');
+    const creds = await versionCredentials(slug, flags['edit-token']);
+    const r = await call(
+      '/api/share/' +
+        encodeURIComponent(slug) +
+        '/versions/' +
+        encodeURIComponent(version) +
+        '/restore',
+      credentialInit(creds),
+    );
+    console.log(JSON.stringify(r, null, 2));
+  },
+
+  async 'sync-code'(argv) {
+    const { positional } = parseFlags(argv);
+    const code = positional[0];
+    if (!code || !/^qhsk_[A-Za-z0-9_-]{43}$/.test(code)) {
+      throw new Error('Usage: qhs sync-code <qhsk_...>');
+    }
+    await saveSyncKey(code);
+    console.log(
+      JSON.stringify(
+        { ok: true, storedAt: STORE_PATH, note: 'Version history now works for shares from your other machines.' },
+        null,
+        2,
+      ),
+    );
+  },
 };
 
 // ---------- entry -------------------------------------------------------------
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (!cmd || !commands[cmd]) {
-  console.error('Usage: qhs <share|edit|delete|stats|list> [args]');
+  console.error('Usage: qhs <share|edit|delete|stats|list|versions|preview|restore|sync-code> [args]');
   console.error('');
   console.error('  qhs share <file|->              [--title="label"]');
   console.error('  qhs edit <slug> <file|->        [--edit-token=...]');
   console.error('  qhs delete <slug>               [--edit-token=...]');
   console.error('  qhs stats <slug>');
   console.error('  qhs list');
+  console.error('  qhs versions <slug>             [--edit-token=...]');
+  console.error('  qhs preview <slug> <version>    [--edit-token=...]  # raw source, does not publish');
+  console.error('  qhs restore <slug> <version>    [--edit-token=...]');
+  console.error('  qhs sync-code <qhsk_...>        # once, for shares from other machines');
   process.exit(1);
 }
 

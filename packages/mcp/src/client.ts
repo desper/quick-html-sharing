@@ -18,11 +18,29 @@ export interface UploadResult {
   editUrl: string;
 }
 
+export interface ReferrerStat {
+  /** Hostname, or the synthetic buckets 'direct' / 'other'. */
+  source: string;
+  views: number;
+}
+
+export interface DailyViewStat {
+  /** UTC calendar day, `YYYY-MM-DD`. */
+  date: string;
+  views: number;
+}
+
 export interface StatsResult {
   slug: string;
   createdAt: string;
   views: number;
+  uniqueViewers: number;
+  /** Crawler / link-unfurl fetches, excluded from `views`. */
+  botViews: number;
   lastViewedAt: string | null;
+  referrers: ReferrerStat[];
+  /** Human views per UTC day for the last 30 days, oldest first. */
+  dailyViews: DailyViewStat[];
   deleted: boolean;
 }
 
@@ -41,15 +59,32 @@ async function call<T>(path: string, init: RequestInit): Promise<T> {
   return (await r.json()) as T;
 }
 
-export function uploadHtml(html: string): Promise<UploadResult> {
+/**
+ * Uploads HTML. Pass the saved sync key to enrol the share as you create it.
+ *
+ * Without the bearer the server stores `owner_key_hash = NULL`, and a share
+ * that was never enrolled cannot be reached by sync key from anywhere — so
+ * version history and restore silently stop working on the user's other
+ * machines even though the sync code was saved on both. The web uploader has
+ * always sent it; the agent integrations did not, which made the cross-device
+ * story true for the dashboard and false for MCP and the skill.
+ */
+export function uploadHtml(html: string, syncKey?: string | null): Promise<UploadResult> {
   return call<UploadResult>('/api/upload', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(syncKey ? { Authorization: `Bearer ${syncKey}` } : {}),
+    },
     body: JSON.stringify({ html }),
   });
 }
 
-export function editHtml(slug: string, html: string, editToken: string): Promise<{ slug: string; ok: true }> {
+export function editHtml(
+  slug: string,
+  html: string,
+  editToken: string,
+): Promise<{ slug: string; ok: true }> {
   return call('/api/edit/' + encodeURIComponent(slug), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -67,4 +102,83 @@ export function deleteShare(slug: string, editToken: string): Promise<{ slug: st
 
 export function getStats(slug: string): Promise<StatsResult> {
   return call('/api/share/' + encodeURIComponent(slug) + '/stats', { method: 'GET' });
+}
+
+// ---------- version history ----------
+
+export interface VersionEntry {
+  version: number;
+  createdAt: string;
+  contentSize: number;
+}
+
+export interface VersionListResult {
+  slug: string;
+  latestVersion: number;
+  versions: VersionEntry[];
+}
+
+export interface RestoreResult {
+  slug: string;
+  restoredFrom: number;
+  newVersion: number;
+}
+
+/**
+ * Version endpoints accept either credential. Exactly one is sent: a sync key
+ * in the Authorization header, or an edit token in the body. Never both — the
+ * server treats the bearer as authoritative and ignores a body token, so
+ * sending both would hide which one actually authorized the call.
+ *
+ * These are POST, not GET, because an edit token may only travel in a body:
+ * URL paths and query strings end up in server logs.
+ */
+export type VersionCredentials = { editToken: string } | { syncKey: string };
+
+function credentialInit(creds: VersionCredentials): RequestInit {
+  return 'syncKey' in creds
+    ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.syncKey}` },
+        body: '{}',
+      }
+    : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editToken: creds.editToken }),
+      };
+}
+
+export function listVersions(slug: string, creds: VersionCredentials): Promise<VersionListResult> {
+  return call('/api/share/' + encodeURIComponent(slug) + '/versions', credentialInit(creds));
+}
+
+export function restoreVersion(
+  slug: string,
+  version: number,
+  creds: VersionCredentials,
+): Promise<RestoreResult> {
+  return call(
+    '/api/share/' + encodeURIComponent(slug) + '/versions/' + version + '/restore',
+    credentialInit(creds),
+  );
+}
+
+/** Returns the raw source of an old version. Plain text, not parsed as JSON. */
+export async function getVersionSource(
+  slug: string,
+  version: number,
+  creds: VersionCredentials,
+): Promise<string> {
+  const init = credentialInit(creds);
+  const path = '/api/share/' + encodeURIComponent(slug) + '/versions/' + version + '/raw';
+  const r = await fetch(`${ENDPOINT}${path}`, {
+    ...init,
+    headers: { 'User-Agent': USER_AGENT, ...init.headers },
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => '');
+    throw new Error(`qhs POST ${path} → ${r.status}: ${text}`);
+  }
+  return r.text();
 }

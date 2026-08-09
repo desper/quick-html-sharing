@@ -1,26 +1,33 @@
+import { type EditRequest, MAX_HTML_BYTES, type ShareRow } from '@qhs/shared';
 import { Hono } from 'hono';
-import { MAX_HTML_BYTES, type EditRequest, type ShareRow } from '@qhs/shared';
-import type { AppEnv } from '../types';
+import { authorizeShareOwnership } from '../lib/authorize';
 import { sha256Hex } from '../lib/hash';
+import { htmlObjectKey, versionPrefix } from '../lib/objectKey';
 import { timingSafeEqual } from '../lib/tokens';
+import { writeNewVersion } from '../lib/versions';
 import { syncKeyOptional } from '../middleware/sync-key';
-import { htmlObjectKey } from './upload';
+import { deleteObjectsInBatches } from './cleanup';
+import { writeRateLimit } from '../middleware/write-rate-limit';
+import type { AppEnv } from '../types';
 
 /**
  * POST /api/edit/:slug
  * Body: { html, editToken }
  *
  * Auth via timing-safe compare of sha256(editToken) vs stored hash.
- * Replaces R2 object only — does not change slug, edit_token_hash, or any
- * D1 metadata. Tombstoned (deleted) shares cannot be revived via edit.
+ *
+ * Appends a new version rather than overwriting (see lib/versions.ts for the
+ * write state machine and why its R2/D1 ordering is the reverse of upload's).
+ * The share URL always serves the newest version, so the observable behaviour
+ * is unchanged — what changes is that the previous content survives and can
+ * be restored. Does not change slug or edit_token_hash. Tombstoned (deleted)
+ * shares cannot be revived via edit.
  */
 export const editRoute = new Hono<AppEnv>();
 
-editRoute.post('/edit/:slug', async (c) => {
+editRoute.post('/edit/:slug', writeRateLimit, async (c) => {
   const slug = c.req.param('slug');
-  const body = await c.req
-    .json<Partial<EditRequest>>()
-    .catch(() => ({}) as Partial<EditRequest>);
+  const body = await c.req.json<Partial<EditRequest>>().catch(() => ({}) as Partial<EditRequest>);
 
   if (typeof body.html !== 'string' || typeof body.editToken !== 'string') {
     return c.json({ error: 'bad_request', message: 'Missing html or editToken.' }, 400);
@@ -48,35 +55,37 @@ editRoute.post('/edit/:slug', async (c) => {
     return c.json({ error: 'forbidden', message: 'Bad edit token.' }, 403);
   }
 
-  await c.env.HTML_BUCKET.put(htmlObjectKey(slug), body.html, {
-    httpMetadata: { contentType: 'text/html; charset=utf-8' },
-  });
+  const result = await writeNewVersion(c.env, slug, body.html, byteLength);
+  if (!result.ok) {
+    if (result.reason === 'storage_failed') {
+      return c.json(
+        { error: 'storage_failed', message: 'Could not store HTML, please retry.' },
+        502,
+      );
+    }
+    // Sustained contention on one share. The client still holds the HTML, so
+    // say so plainly instead of letting the user assume their work is gone.
+    return c.json(
+      {
+        error: 'conflict',
+        message: 'Another edit landed first. Your content is still here — save again.',
+      },
+      409,
+    );
+  }
 
-  await c.env.DB.prepare(
-    `UPDATE shares SET content_size = ? WHERE slug = ?`,
-  )
-    .bind(byteLength, slug)
-    .run();
-
-  return c.json({ slug, ok: true });
+  return c.json({ slug, ok: true, version: result.version });
 });
 
 /**
  * DELETE /api/share/:slug
  *
- * Two authorization paths with MUTUALLY EXCLUSIVE priority — no cross
- * fallback (eng-review Issue 6A); every 403 points at exactly one credential:
- *
- *   Authorization: Bearer qhsk_...  → owner-key path. Key must own the share
- *                                     (owner_key_hash match) or 403 — the
- *                                     editToken in the body, if any, is
- *                                     deliberately ignored.
- *   no header + body { editToken }  → original edit-token path, unchanged.
- *   neither                         → 400.
- *
  * Deletion is an ownership action (premise P3): owner-key suffices, no edit
- * token required. Soft-deletes (status='deleted', deleted_at=now) and
- * removes the R2 object. Subsequent GETs on the share subdomain return 404.
+ * token required. The two-credential rule lives in lib/authorize.ts, shared
+ * with the version endpoints.
+ *
+ * Soft-deletes (status='deleted', deleted_at=now) and removes the R2 objects.
+ * Subsequent GETs on the share subdomain return 404.
  */
 editRoute.delete('/share/:slug', syncKeyOptional, async (c) => {
   const slug = c.req.param('slug');
@@ -85,6 +94,8 @@ editRoute.delete('/share/:slug', syncKeyOptional, async (c) => {
     .json<{ editToken?: string }>()
     .catch(() => ({}) as { editToken?: string });
 
+  // Credential shape is checked before the DB read so a request with neither
+  // credential cannot probe whether a slug exists.
   if (!ownerKeyHash && typeof body.editToken !== 'string') {
     return c.json(
       { error: 'bad_request', message: 'Provide a sync key bearer or an editToken.' },
@@ -105,27 +116,44 @@ editRoute.delete('/share/:slug', syncKeyOptional, async (c) => {
     return c.json({ slug, ok: true }); // idempotent
   }
 
-  if (ownerKeyHash) {
-    // Owner-key path. NULL owner also 403s: an unclaimed share can't be
-    // deleted by key — claim it first (or use its edit token, sans header).
-    if (!row.owner_key_hash || !timingSafeEqual(ownerKeyHash, row.owner_key_hash)) {
-      return c.json({ error: 'forbidden', message: 'Sync key does not own this share.' }, 403);
-    }
-  } else {
-    const incomingHash = await sha256Hex(body.editToken as string);
-    if (!timingSafeEqual(incomingHash, row.edit_token_hash)) {
-      return c.json({ error: 'forbidden', message: 'Bad edit token.' }, 403);
-    }
+  const authz = await authorizeShareOwnership(ownerKeyHash, body.editToken, row);
+  if (!authz.ok) {
+    return c.json({ error: authz.error, message: authz.message }, authz.status);
   }
 
   const now = Math.floor(Date.now() / 1000);
-  await c.env.DB.prepare(
-    `UPDATE shares SET status = 'deleted', deleted_at = ? WHERE slug = ?`,
-  )
+  await c.env.DB.prepare(`UPDATE shares SET status = 'deleted', deleted_at = ? WHERE slug = ?`)
     .bind(now, slug)
     .run();
-  // R2 delete is best-effort: D1 says "deleted", that's the truth, R2 is just cache.
-  await c.env.HTML_BUCKET.delete(htmlObjectKey(slug)).catch(() => undefined);
+  // Deleting a share is an explicit "I'm done with this" — don't sit on its
+  // viewers' user agents and referrers for the rest of the retention window.
+  // The rows stay (the share row is a permanent tombstone so the slug is never
+  // reused, and its stats stay readable), but the free-text fields go now.
+  await c.env.DB.prepare(`UPDATE views SET ua = NULL, referrer = NULL WHERE slug = ?`)
+    .bind(slug)
+    .run();
+  // R2 delete is best-effort: D1 says "deleted", that's the truth, R2 is just
+  // cache. Every version goes, not just v1 — and v1 needs naming separately
+  // because it kept the pre-versioning flat key, outside the prefix.
+  // If any of this fails we swallow it as before; the version sweep picks up
+  // deleted shares precisely so a failure here cannot strand content forever.
+  //
+  // One unpaginated list() and one unbatched delete() are both wrong here: R2
+  // may return a short page with `truncated` set, and delete() takes at most
+  // 1000 keys per call. Neither failure is visible — you just silently keep
+  // objects for a share the user deleted. The sweep is the backstop, so this
+  // stays best-effort, but it should at least attempt the whole set.
+  const keys = [htmlObjectKey(slug, 1)];
+  let cursor: string | undefined;
+  do {
+    const page = await c.env.HTML_BUCKET.list({ prefix: versionPrefix(slug), cursor }).catch(
+      () => null,
+    );
+    if (!page) break;
+    keys.push(...page.objects.map((o) => o.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor !== undefined);
+  await deleteObjectsInBatches(c.env, keys);
 
   return c.json({ slug, ok: true });
 });

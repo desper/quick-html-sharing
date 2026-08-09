@@ -13,6 +13,10 @@ import Base from '../layouts/Base.astro';
         <div style="font-size: 32px; font-weight: 700" id="views">—</div>
       </div>
       <div>
+        <div class="muted">Unique viewers</div>
+        <div style="font-size: 32px; font-weight: 700" id="unique-viewers">—</div>
+      </div>
+      <div>
         <div class="muted">Last viewed</div>
         <div style="font-size: 16px" id="last-viewed">—</div>
       </div>
@@ -21,6 +25,18 @@ import Base from '../layouts/Base.astro';
         <div style="font-size: 16px" id="created-at">—</div>
       </div>
     </div>
+
+    <p class="muted" id="bot-note" style="margin-top: 12px" hidden></p>
+
+    <section id="trend-section" style="margin-top: 24px" hidden>
+      <div class="muted">Last 30 days</div>
+      <div id="trend" class="trend" role="img" aria-label="Daily views chart"></div>
+    </section>
+
+    <section id="referrers-section" style="margin-top: 24px" hidden>
+      <div class="muted">Traffic sources</div>
+      <ul id="referrers" style="list-style: none; padding: 0; margin: 8px 0 0"></ul>
+    </section>
     <p class="muted" id="deleted-banner" hidden style="color: var(--danger)">
       This share is deleted.
     </p>
@@ -32,6 +48,27 @@ import Base from '../layouts/Base.astro';
 
   <p class="error" id="error-msg" hidden></p>
 
+  <style>
+    .trend {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 56px;
+      margin-top: 8px;
+    }
+    .trend-bar {
+      flex: 1;
+      min-height: 2px;
+      background: var(--accent);
+      border-radius: 2px 2px 0 0;
+    }
+    /* A zero day still gets a visible baseline tick — an empty column reads as
+       missing data rather than "nobody came that day". */
+    .trend-bar[data-empty='true'] {
+      background: var(--border);
+    }
+  </style>
+
   <script>
     import { getStats, ApiError } from '../lib/api';
 
@@ -41,10 +78,84 @@ import Base from '../layouts/Base.astro';
     const panel = document.getElementById('stats-panel') as HTMLElement;
     const errorMsg = document.getElementById('error-msg') as HTMLElement;
     const views = document.getElementById('views') as HTMLElement;
+    const uniqueViewers = document.getElementById('unique-viewers') as HTMLElement;
+    const botNote = document.getElementById('bot-note') as HTMLElement;
+    const trendSection = document.getElementById('trend-section') as HTMLElement;
+    const trend = document.getElementById('trend') as HTMLElement;
+    const referrersSection = document.getElementById('referrers-section') as HTMLElement;
+    const referrers = document.getElementById('referrers') as HTMLElement;
     const lastViewed = document.getElementById('last-viewed') as HTMLElement;
     const createdAt = document.getElementById('created-at') as HTMLElement;
     const openShare = document.getElementById('open-share') as HTMLAnchorElement;
     const deletedBanner = document.getElementById('deleted-banner') as HTMLElement;
+
+    /**
+     * Renders the traffic-source list.
+     *
+     * Built with textContent, never innerHTML: `source` is derived from the
+     * Referer header, which is attacker-controlled. Injecting it as markup
+     * would be XSS on the dashboard origin — the one origin the whole
+     * subdomain split exists to protect.
+     */
+    function renderReferrers(list: { source: string; views: number }[]) {
+      referrers.replaceChildren();
+      if (!list || list.length === 0) {
+        referrersSection.hidden = true;
+        return;
+      }
+      for (const r of list) {
+        const li = document.createElement('li');
+        li.className = 'row';
+        li.style.justifyContent = 'space-between';
+        li.style.padding = '4px 0';
+
+        const source = document.createElement('span');
+        source.textContent =
+          r.source === 'direct'
+            ? 'Direct (typed, bookmarked, or in-app)'
+            : r.source === 'other'
+              ? 'Other'
+              : r.source;
+
+        const count = document.createElement('span');
+        count.className = 'muted';
+        count.textContent = String(r.views);
+
+        li.append(source, count);
+        referrers.append(li);
+      }
+      referrersSection.hidden = false;
+    }
+
+    /**
+     * Draws the 30-day view trend as a bar strip.
+     *
+     * Bars are scaled against the busiest day rather than a fixed ceiling, so
+     * a share with 3 views and one with 3000 both show their actual shape.
+     * Hidden entirely when there is nothing to plot — 30 flat ticks say less
+     * than the "0 views" number already on the page.
+     */
+    function renderTrend(days: { date: string; views: number }[]) {
+      trend.replaceChildren();
+      const peak = Math.max(...days.map((d) => d.views), 0);
+      if (peak === 0) {
+        trendSection.hidden = true;
+        return;
+      }
+      for (const day of days) {
+        const bar = document.createElement('div');
+        bar.className = 'trend-bar';
+        bar.style.height = `${Math.round((day.views / peak) * 100)}%`;
+        bar.dataset.empty = String(day.views === 0);
+        bar.title = `${day.date}: ${day.views} view${day.views === 1 ? '' : 's'}`;
+        trend.append(bar);
+      }
+      trend.setAttribute(
+        'aria-label',
+        `Daily views over the last ${days.length} days, ${peak} at the busiest.`,
+      );
+      trendSection.hidden = false;
+    }
 
     async function load() {
       if (!slug) {
@@ -56,6 +167,17 @@ import Base from '../layouts/Base.astro';
       try {
         const s = await getStats(slug);
         views.textContent = String(s.views);
+        uniqueViewers.textContent = String(s.uniqueViewers);
+        // Surfaced rather than hidden: with 0 human views, "Slack fetched it
+        // twice" is the difference between "nobody opened it" and "the link
+        // never got anywhere".
+        botNote.textContent =
+          s.botViews === 1
+            ? 'Plus 1 link-preview or crawler fetch, not counted as a view.'
+            : `Plus ${s.botViews} link-preview and crawler fetches, not counted as views.`;
+        botNote.hidden = s.botViews === 0;
+        renderTrend(s.dailyViews);
+        renderReferrers(s.referrers);
         lastViewed.textContent = s.lastViewedAt
           ? new Date(s.lastViewedAt).toLocaleString()
           : 'never';
