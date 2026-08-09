@@ -2,22 +2,6 @@
 
 ## Worker
 
-### 版本歷史：edit 不直接覆寫
-
-**What:** `POST /api/edit/:slug` 改為寫入新版本而非覆寫 R2，新增 `share_versions` 表 + 版本列表/還原 API。
-
-**Why:** 同一份文件常更新多次，現況舊版即時丟失（`edit.ts` 直接 `HTML_BUCKET.put` 同一 key），使用者誤蓋無法救回。
-
-**Context:** 2026-06-12 plan-eng-review（My Shares / Sync Key Registry）期間由使用者新增的需求。起點：`apps/worker/src/routes/edit.ts:49` 的覆寫邏輯。
-
-**2026-08-09 更新：design 輪已完成，可直接實作。** 設計方案在 `~/.gstack/projects/desper-quick-html-sharing/lijianchang-chat-8fd9186a-design-20260808-235816.md`，已過 plan-eng-review 四段審查 + Codex outside voice，20 個決策全數裁定，含 T1-T10 實作任務與平行化 lane。測試計畫在同目錄 `-eng-review-test-plan-` 檔。
-
-原案的 `share_versions` 表**被否決**（R2 list 的 uploaded/size 已是同一份資料，兩個真相來源在無交易的跨儲存寫入下必然漂移）；改為 `shares` 加兩欄（`latest_version`、`versions_pruned_below`）。三個當初未決的問題已裁：retention 保留 10 版、既有物件靠「v1 = 舊 key」零遷移、還原走雙路徑授權（含補齊 my-shares 與 MCP/skill 的入口，否則 owner key 路徑是死 API）。
-
-**Effort:** L
-**Priority:** P2
-**Depends on:** 無（My Shares PR1-3 已出貨；design 已完成）
-
 ### R2 binding 若支援 versionId 就重新評估自管版本 key
 
 **What:** 追蹤 Cloudflare 是否在 Workers R2 binding 上暴露 `versionId`。若有，版本歷史的自管邏輯（`lib/objectKey.ts` 的 v{n} key 佈局、retention sweep、孤兒回收）可能拿掉一大半。
@@ -95,6 +79,26 @@
 **Depends on:** My Shares PR2 出貨後（基線 pattern 先在新頁落地）
 
 ## Completed
+
+### 版本歷史：edit 不直接覆寫（2026-08-09）
+
+`POST /api/edit/:slug` 不再覆寫 R2，改為附加新版本，加上版本列表 / 原始碼預覽 / 還原三個端點。誤蓋現在救得回來。
+
+原案的 `share_versions` 表**被否決**：R2 `list()` 回傳的 `uploaded`/`size` 已經是同一份資料，在沒有交易的 R2+D1 邊界上維持兩個真相來源必然漂移。改為 `shares` 加三欄。
+
+- **`latest_version`** — 純單調計數器。還原寫成新版本而不是搬指標，所以沒有「目前版本」狀態機可以壞掉，也讓還原本身可逆。
+- **`versions_pruned_below`** — 讓 retention sweep 會收斂。原本的 `latest_version > N` 因為計數器只增不減，一個 share 跨過門檻後就永遠符合條件，配上單輪上限會讓同一批 share 每十分鐘重掃、後面的餓死。
+- **`orphan_since`** — 計畫外的第三欄，QA 時才發現：孤兒回收原本掛在 retention 門檻底下，只有兩三個版本的 share 永遠掃不到自己的孤兒。
+
+key 佈局：v1 沿用 pre-versioning 的 flat key（零資料遷移、讀路徑不需要 fallback），v2+ 走 prefix。`htmlObjectKey` 的 `version` 參數刻意沒有預設值——漏傳會是編譯錯誤，不是安靜地覆蓋 v1。
+
+並行寫入用 R2 conditional put（`etagDoesNotMatch: '*'`）搶版號 + D1 CAS 提交。QA 用 5 個並行 edit 打真實 worker 時抓到：CAS 輸家的物件會以合法版本身分留在歷史裡，而 sweep 只認得 `version > latest_version` 的孤兒，後續寫入會把 latest_version 推過那個號碼。改成輸家立刻刪掉自己的 key——安全的前提正是 conditional create 讓那個 key 只可能屬於它自己。
+
+QA 另外抓到一個 P0：commit 前最後一次 `biome --write` 把四個 `.astro` 頁面的 `import Base` 當成死程式碼刪掉，`/edit`、`/my-shares`、`/stats`、`/versions` 全部 500。`astro build` 照樣報「6 pages built」成功，只有 `astro check` 會抓到。已在 `biome.json` 對 `**/*.astro` 關掉 `noUnusedImports`。
+
+E2E 覆蓋四條 critical path（誤蓋救回 / 跨裝置救回 / 預覽先於曝光 / 並行不丟資料）+ 409 時編輯框不清空。playwright.config 多起一個 share-role worker，因為「收件人看到還原後的內容」是另一個 process 讀同一份 R2/D1 的宣稱。
+
+設計與審查記錄：`~/.gstack/projects/desper-quick-html-sharing/lijianchang-chat-8fd9186a-design-20260808-235816.md`
 
 ### viewer analytics 補完（2026-08-08）
 
