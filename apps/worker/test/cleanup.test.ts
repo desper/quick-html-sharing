@@ -5,7 +5,12 @@ import {
   VIEW_PII_RETENTION_SECONDS,
 } from '@qhs/shared';
 import { describe, expect, it } from 'vitest';
-import { anonymizeOldViews, cleanupStalePending, pruneOldVersions } from '../src/routes/cleanup';
+import {
+  ANONYMIZE_BATCH_SIZE,
+  anonymizeOldViews,
+  cleanupStalePending,
+  pruneOldVersions,
+} from '../src/routes/cleanup';
 import type { Bindings } from '../src/types';
 import { dashboardFetch, uploadHtml, uploadParsed } from './_helpers';
 
@@ -81,6 +86,41 @@ describe('anonymizeOldViews', () => {
 
     expect(await anonymizeOldViews(env)).toBe(1);
     expect(await anonymizeOldViews(env)).toBe(0);
+  });
+
+  it('drains a backlog larger than one batch', async () => {
+    const slug = await createShare();
+    const rows = ANONYMIZE_BATCH_SIZE + 50;
+
+    // Every other test here has a handful of rows, so all of them fit in one
+    // batch and none exercises the loop. The failure this guards against only
+    // appears at scale: the old single UPDATE had no bound, and a backlog big
+    // enough to blow D1's execution limit would fail the whole statement and
+    // then fail identically every ten minutes forever.
+    await env.DB.batch(
+      Array.from({ length: rows }, (_, i) =>
+        env.DB.prepare(
+          `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot)
+           VALUES (?, ?, ?, ?, ?, 0)`,
+        ).bind(slug, OUTSIDE_WINDOW, `hash-${i}`, 'Mozilla/5.0', 'example.com'),
+      ),
+    );
+
+    expect(await anonymizeOldViews(env)).toBe(rows);
+
+    const left = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM views
+       WHERE slug = ? AND (ua IS NOT NULL OR referrer IS NOT NULL)`,
+    )
+      .bind(slug)
+      .first<{ n: number }>();
+    expect(left?.n).toBe(0);
+
+    // The rows themselves survive — anonymizing must not shrink view counts.
+    const total = await env.DB.prepare(`SELECT COUNT(*) AS n FROM views WHERE slug = ?`)
+      .bind(slug)
+      .first<{ n: number }>();
+    expect(total?.n).toBe(rows);
   });
 
   it('does not shrink the view count it anonymizes', async () => {

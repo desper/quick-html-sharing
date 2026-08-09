@@ -103,6 +103,17 @@ export interface VersionSweepResult {
  */
 export const VERSION_LIST_MAX_PAGES = 20;
 
+/**
+ * Anonymization batch size and per-run cap.
+ *
+ * 500 keeps each UPDATE well inside D1's statement limits; 20 passes clears
+ * 10k rows per cron tick. Hitting the cap is not a failure — the cron runs
+ * again in ten minutes and the WHERE clause no longer matches what was
+ * already cleared, so the backlog drains instead of being retried whole.
+ */
+export const ANONYMIZE_BATCH_SIZE = 500;
+export const ANONYMIZE_MAX_BATCHES = 20;
+
 async function listAllVersionObjects(
   env: Bindings,
   prefix: string,
@@ -266,14 +277,59 @@ export async function anonymizeOldViews(env: Bindings): Promise<number> {
   // one cron interval instead, and costs nothing on the hot path — the
   // alternative, making the view insert conditional on committed status, adds a
   // check to every single share view.
-  const result = await env.DB.prepare(
-    `UPDATE views SET ua = NULL, referrer = NULL
-     WHERE (ua IS NOT NULL OR referrer IS NOT NULL)
+  // Bounded batches, not one open-ended UPDATE.
+  //
+  // The unbounded version was fine on a quiet database and a trap on a busy
+  // one: a backlog big enough to exceed D1's execution limit fails the whole
+  // statement, and since the next run builds the identical statement it fails
+  // again, every ten minutes, forever. PII that was supposed to expire at 90
+  // days then just never expires — and nothing surfaces, because the sweep is
+  // fire-and-forget.
+  //
+  // SQLite has no UPDATE ... LIMIT, so each batch is bounded by first reading
+  // the rowids it covers. The UPDATE then re-states the same predicate over
+  // that rowid RANGE rather than listing the ids — an `IN (?, ?, …)` list of
+  // ANONYMIZE_BATCH_SIZE placeholders blows past D1's 100-bound-parameter
+  // ceiling and fails the statement outright, which is exactly the failure mode
+  // the batching was added to prevent. The range form is three parameters no
+  // matter how large the batch is.
+  //
+  // Ordering by rowid is what makes the range equivalent to the list: the batch
+  // is then every candidate row between the first and last id, so re-applying
+  // the predicate over [lo, hi] touches those rows and nothing else.
+  //
+  // Each pass shrinks the candidate set (a cleared row no longer satisfies the
+  // NOT NULL half of the predicate), so progress is monotonic and terminates.
+  const CANDIDATE_PREDICATE = `(ua IS NOT NULL OR referrer IS NOT NULL)
        AND (viewed_at < ?
-            OR slug IN (SELECT slug FROM shares WHERE status = 'deleted'))`,
-  )
-    .bind(cutoff)
-    .run();
+            OR slug IN (SELECT slug FROM shares WHERE status = 'deleted'))`;
 
-  return result.meta.changes ?? 0;
+  let anonymized = 0;
+  for (let pass = 0; pass < ANONYMIZE_MAX_BATCHES; pass++) {
+    const batch = await env.DB.prepare(
+      `SELECT rowid AS id FROM views
+       WHERE ${CANDIDATE_PREDICATE}
+       ORDER BY rowid LIMIT ?`,
+    )
+      .bind(cutoff, ANONYMIZE_BATCH_SIZE)
+      .all<{ id: number }>();
+
+    const ids = (batch.results ?? []).map((r) => r.id);
+    if (ids.length === 0) break;
+
+    const result = await env.DB.prepare(
+      `UPDATE views SET ua = NULL, referrer = NULL
+       WHERE ${CANDIDATE_PREDICATE}
+         AND rowid BETWEEN ? AND ?`,
+    )
+      .bind(cutoff, ids[0], ids[ids.length - 1])
+      .run();
+    anonymized += result.meta.changes ?? 0;
+
+    // A short page means we drained the queue; no need to pay for one more
+    // round trip just to see zero.
+    if (ids.length < ANONYMIZE_BATCH_SIZE) break;
+  }
+
+  return anonymized;
 }
