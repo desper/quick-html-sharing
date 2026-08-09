@@ -44,15 +44,24 @@ Claude Code supports MCP too, but the companion **[`qhs` skill](https://github.c
 
 ## What you get
 
-Five tools that show up in your agent's tool list:
+Nine tools that show up in your agent's tool list:
 
 | Tool | What it does |
 |------|--------------|
 | `qhs_share` | Upload an HTML document or snippet, get back a public shareable URL + private edit URL |
-| `qhs_edit` | Update HTML at an existing share (slug stays the same) |
+| `qhs_edit` | Update HTML at an existing share (slug stays the same) — keeps the old version |
 | `qhs_delete` | Permanently take down a share (URL returns 404 after) |
-| `qhs_stats` | Get view count, last viewed time, created time |
+| `qhs_stats` | Views, unique viewers, traffic sources, 7-day activity, crawler fetches |
 | `qhs_list` | List shares created from this machine |
+| `qhs_versions` | List the stored versions of a share, newest first |
+| `qhs_preview_version` | Read an old version's source before restoring it |
+| `qhs_restore` | Republish an older version (appended as a new version, so it's undoable) |
+| `qhs_set_sync_code` | Save your sync code so version history works for shares made on your other machines |
+
+**Editing never overwrites.** Each `qhs_edit` appends a new version and keeps the
+previous one, so an agent that regenerates a page from a bad prompt is recoverable:
+`qhs_versions` → `qhs_preview_version` → `qhs_restore`. Restoring appends too, so
+the restore itself can be undone.
 
 ## How it works
 
