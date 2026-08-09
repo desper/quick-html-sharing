@@ -6,6 +6,7 @@ import { htmlObjectKey, versionPrefix } from '../lib/objectKey';
 import { timingSafeEqual } from '../lib/tokens';
 import { writeNewVersion } from '../lib/versions';
 import { syncKeyOptional } from '../middleware/sync-key';
+import { deleteObjectsInBatches } from './cleanup';
 import { writeRateLimit } from '../middleware/write-rate-limit';
 import type { AppEnv } from '../types';
 
@@ -136,9 +137,23 @@ editRoute.delete('/share/:slug', syncKeyOptional, async (c) => {
   // because it kept the pre-versioning flat key, outside the prefix.
   // If any of this fails we swallow it as before; the version sweep picks up
   // deleted shares precisely so a failure here cannot strand content forever.
-  const versions = await c.env.HTML_BUCKET.list({ prefix: versionPrefix(slug) }).catch(() => null);
-  const keys = [htmlObjectKey(slug, 1), ...(versions?.objects ?? []).map((o) => o.key)];
-  await c.env.HTML_BUCKET.delete(keys).catch(() => undefined);
+  //
+  // One unpaginated list() and one unbatched delete() are both wrong here: R2
+  // may return a short page with `truncated` set, and delete() takes at most
+  // 1000 keys per call. Neither failure is visible — you just silently keep
+  // objects for a share the user deleted. The sweep is the backstop, so this
+  // stays best-effort, but it should at least attempt the whole set.
+  const keys = [htmlObjectKey(slug, 1)];
+  let cursor: string | undefined;
+  do {
+    const page = await c.env.HTML_BUCKET.list({ prefix: versionPrefix(slug), cursor }).catch(
+      () => null,
+    );
+    if (!page) break;
+    keys.push(...page.objects.map((o) => o.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor !== undefined);
+  await deleteObjectsInBatches(c.env, keys);
 
   return c.json({ slug, ok: true });
 });

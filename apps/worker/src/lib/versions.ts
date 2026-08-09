@@ -115,9 +115,16 @@ export async function writeNewVersion(
 
     if (claimed === null) continue;
 
+    // `status = 'committed'` is part of the CAS, not just the read above. A
+    // delete landing between the SELECT and this UPDATE would otherwise still
+    // satisfy the slug+version predicate, so the write would report success on
+    // a share that no longer exists — and the delete's R2 cleanup has already
+    // run, so the object we just wrote would be stranded. Failing the CAS here
+    // routes into the same loser path: delete our own object, then re-read and
+    // find no committed row, which returns conflict.
     const update = await env.DB.prepare(
       `UPDATE shares SET latest_version = ?, content_size = ?
-       WHERE slug = ? AND latest_version = ?`,
+       WHERE slug = ? AND latest_version = ? AND status = 'committed'`,
     )
       .bind(claimed, byteLength, slug, observed)
       .run();

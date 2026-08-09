@@ -6,6 +6,7 @@ import {
 } from '@qhs/shared';
 import { describe, expect, it } from 'vitest';
 import { anonymizeOldViews, cleanupStalePending, pruneOldVersions } from '../src/routes/cleanup';
+import type { Bindings } from '../src/types';
 import { dashboardFetch, uploadHtml, uploadParsed } from './_helpers';
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -248,6 +249,52 @@ describe('pruneOldVersions', () => {
     const result = await pruneOldVersions(env);
     expect(result.pruned).toBe(1);
     expect(await env.HTML_BUCKET.head(`shares/${slug}.html`)).toBeNull();
+  });
+
+  it('finishes a deleted share whose listing came back truncated', async () => {
+    const slug = await shareWithVersions(5, '198.51.100.160');
+    await env.DB.prepare(`UPDATE shares SET status = 'deleted', deleted_at = ? WHERE slug = ?`)
+      .bind(Math.floor(Date.now() / 1000), slug)
+      .run();
+
+    // R2 can return fewer objects than exist and set `truncated` — the docs are
+    // explicit that it "may return fewer to manage memory pressure" and that
+    // callers must trust `truncated` rather than the object count. So this is
+    // not a >1000-objects edge case; it can happen to any share, any time.
+    //
+    // If the sweep marks a deleted share done after seeing only one page, the
+    // objects it never listed stay in R2 forever — for a share the user
+    // explicitly deleted. That is a privacy failure, not a storage bill.
+    const bucket = env.HTML_BUCKET;
+    const realList = bucket.list.bind(bucket);
+    const truncating = new Proxy(bucket, {
+      get(target, prop, _receiver) {
+        if (prop === 'list') {
+          // Page 1 is short and truncated; page 2 (cursor set) returns the rest
+          // and ends. Real R2 always advances the cursor — a stub that returns
+          // `truncated: true` forever would just hang the caller.
+          return async (opts: R2ListOptions) => {
+            const full = await realList({ ...opts, cursor: undefined });
+            return opts.cursor === undefined
+              ? { ...full, objects: full.objects.slice(0, 2), truncated: true, cursor: 'page2' }
+              : { ...full, objects: full.objects.slice(2), truncated: false, cursor: undefined };
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    await pruneOldVersions({ ...env, HTML_BUCKET: truncating } as unknown as Bindings);
+
+    // The share was deleted; nothing of it may survive. Give the sweep as many
+    // honest passes as it wants — what it must never do is declare the share
+    // finished while objects it never saw are still there.
+    for (let pass = 0; pass < 5; pass++) {
+      if ((await existingVersions(slug)).length === 0) break;
+      await pruneOldVersions(env);
+    }
+    expect(await existingVersions(slug)).toEqual([]);
   });
 
   it('leaves unrecognised objects in the prefix alone', async () => {

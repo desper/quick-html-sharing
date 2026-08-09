@@ -92,6 +92,57 @@ export interface VersionSweepResult {
  * it is hand-editable from the dashboard, and a sweep that deletes things it
  * does not recognise is a sweep nobody can trust.
  */
+/**
+ * Every version object under a share's prefix, following R2's cursor.
+ *
+ * One `list()` call is not enough and the object count is not the signal. R2
+ * caps a page at 1000 keys and, by its own documentation, "may return fewer to
+ * manage memory pressure" — so a short page is not evidence that the share is
+ * short. The sweep used to trust a single page, which let it mark a deleted
+ * share finished while objects it never listed stayed in R2 for good.
+ */
+export const VERSION_LIST_MAX_PAGES = 20;
+
+async function listAllVersionObjects(
+  env: Bindings,
+  prefix: string,
+): Promise<{ objects: R2Object[]; complete: boolean }> {
+  const objects: R2Object[] = [];
+  let cursor: string | undefined;
+  // Bounded, not `while (cursor)`. An unbounded follow trusts R2 to always
+  // advance the cursor; if it ever doesn't, the Worker spins until it hits the
+  // CPU limit and the whole cron dies, taking the pending sweep with it.
+  // Stopping early is safe because `complete: false` keeps the share eligible.
+  for (let page = 0; page < VERSION_LIST_MAX_PAGES; page++) {
+    const res: R2Objects = await env.HTML_BUCKET.list({ prefix, cursor });
+    objects.push(...res.objects);
+    if (!res.truncated) return { objects, complete: true };
+    cursor = res.cursor;
+  }
+  return { objects, complete: false };
+}
+
+/**
+ * Deletes keys in R2-sized batches. Returns false if any batch failed.
+ *
+ * `delete()` takes at most 1000 keys. Handing it more is not a partial success
+ * — the whole call fails, and since the sweep retries the identical set every
+ * run, a share that accumulated more than 1000 doomed objects would fail
+ * forever. Batching is what makes "retry until it succeeds" actually converge.
+ */
+export const R2_DELETE_MAX_KEYS = 1000;
+
+export async function deleteObjectsInBatches(env: Bindings, keys: string[]): Promise<boolean> {
+  for (let i = 0; i < keys.length; i += R2_DELETE_MAX_KEYS) {
+    try {
+      await env.HTML_BUCKET.delete(keys.slice(i, i + R2_DELETE_MAX_KEYS));
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function pruneOldVersions(
   env: Bindings,
   /**
@@ -137,11 +188,11 @@ export async function pruneOldVersions(
     // keep nothing — latest_version + 1 puts every version below the cut.
     const keepFrom = deleted ? row.latest_version + 1 : row.latest_version - RETENTION_VERSIONS + 1;
 
-    const listed = await env.HTML_BUCKET.list({ prefix: versionPrefix(row.slug) });
+    const { objects: listed, complete } = await listAllVersionObjects(env, versionPrefix(row.slug));
     const doomed: string[] = [];
     let heldBack = false;
 
-    for (const object of listed.objects) {
+    for (const object of listed) {
       const version = versionFromKey(object.key);
       if (version === null) continue;
       if (version < keepFrom) {
@@ -155,10 +206,12 @@ export async function pruneOldVersions(
     // v1 is not under the prefix — it kept the pre-versioning flat key.
     if (keepFrom > 1) doomed.push(htmlObjectKey(row.slug, 1));
 
+    // A failed delete must not look like a finished one. Swallowing the error
+    // and advancing the markers anyway is how a deleted share's HTML stays in
+    // R2 forever: the row drops out of the eligibility query and nothing ever
+    // looks at it again. Leave the markers alone and the next run retries.
     if (doomed.length > 0) {
-      // One call, not one per key: R2 takes up to 1000 keys per delete, far
-      // more than a share can accumulate.
-      await env.HTML_BUCKET.delete(doomed).catch(() => undefined);
+      if (!(await deleteObjectsInBatches(env, doomed))) continue;
       pruned += doomed.length;
     }
 
@@ -169,16 +222,25 @@ export async function pruneOldVersions(
     // otherwise a still-young orphan would lose its only ticket back into the
     // sweep. Everything else about this row is idempotent, so re-running is
     // free.
-    const clearOrphanFlag = heldBack ? '' : ', orphan_since = NULL';
+    // Two independent conditions, deliberately not merged:
+    //   `complete`  — we saw the share's whole object set. Without it we cannot
+    //                 claim anything about what is left.
+    //   `!heldBack` — nothing was deliberately spared (a young orphan).
+    // Only a run that is both may declare the share finished or drop the orphan
+    // flag, which is the ticket back into this query.
+    const finished = complete && !heldBack;
+    const clearOrphanFlag = finished ? ', orphan_since = NULL' : '';
     if (deleted) {
-      if (!heldBack) {
+      if (finished) {
         await env.DB.prepare(
           `UPDATE shares SET versions_pruned_below = ?${clearOrphanFlag} WHERE slug = ?`,
         )
           .bind(row.latest_version + 1, row.slug)
           .run();
       }
-    } else {
+    } else if (complete) {
+      // A spared orphan does not make the retention cut wrong — the old
+      // versions really are gone — so this advances on `complete` alone.
       await env.DB.prepare(
         `UPDATE shares SET versions_pruned_below = ?${clearOrphanFlag} WHERE slug = ?`,
       )
@@ -193,9 +255,22 @@ export async function pruneOldVersions(
 export async function anonymizeOldViews(env: Bindings): Promise<number> {
   const cutoff = Math.floor(Date.now() / 1000) - VIEW_PII_RETENTION_SECONDS;
 
+  // Two ways a view row loses its free-text fields: it aged out, or its share
+  // was deleted.
+  //
+  // Deletion already anonymizes inline, but that is one shot against a moving
+  // target: a share-page request that passed the committed check just before
+  // the delete can INSERT its view row just after, and that row would then keep
+  // its raw user agent and referrer for the full 90 days on a share the user
+  // explicitly deleted. Re-covering deleted shares here bounds that window to
+  // one cron interval instead, and costs nothing on the hot path — the
+  // alternative, making the view insert conditional on committed status, adds a
+  // check to every single share view.
   const result = await env.DB.prepare(
     `UPDATE views SET ua = NULL, referrer = NULL
-     WHERE viewed_at < ? AND (ua IS NOT NULL OR referrer IS NOT NULL)`,
+     WHERE (ua IS NOT NULL OR referrer IS NOT NULL)
+       AND (viewed_at < ?
+            OR slug IN (SELECT slug FROM shares WHERE status = 'deleted'))`,
   )
     .bind(cutoff)
     .run();
