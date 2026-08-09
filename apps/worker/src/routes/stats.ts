@@ -8,6 +8,7 @@ import {
   VIEW_PII_RETENTION_SECONDS,
 } from '@qhs/shared';
 import { Hono } from 'hono';
+import { referrerSource } from '../lib/referrer';
 import type { AppEnv } from '../types';
 
 const SECONDS_PER_DAY = 86_400;
@@ -41,7 +42,7 @@ statsRoute.get('/share/:slug/stats', async (c) => {
 
   // Independent aggregates over the same slug — no transaction needed, stats
   // are a snapshot and a view landing between them is not a bug.
-  const [counts, referrerRows, dailyRows] = await Promise.all([
+  const [counts, referrerRows, referrerTotal, dailyRows] = await Promise.all([
     // Human views and bot views come from one pass: SUM(is_bot) rather than a
     // second query, since both numbers are always reported together.
     c.env.DB.prepare(
@@ -58,8 +59,13 @@ statsRoute.get('/share/:slug/stats', async (c) => {
         last_viewed: number | null;
         bot_views: number;
       }>(),
-    // Grouping in SQL keeps the response row count proportional to the number
-    // of distinct referrers (small), not to the number of views (unbounded).
+    // LIMIT is the point, not an optimisation. "Distinct referrers is small"
+    // was the old assumption here and it was wrong: `Referer` is supplied by
+    // the client, so anyone holding the share URL could mint a new group per
+    // request and make this query return unboundedly many rows. Values are now
+    // normalised on write (lib/referrer.ts), which is what makes ordering by
+    // count and cutting at N correct — the grouping key is already the bucket
+    // we report, so the top N here is the real top N.
     //
     // Scoped to the retention window on purpose: past it the sweep has nulled
     // `referrer`, and those rows would otherwise be indistinguishable from a
@@ -67,10 +73,18 @@ statsRoute.get('/share/:slug/stats', async (c) => {
     c.env.DB.prepare(
       `SELECT referrer, COUNT(*) AS n FROM views
        WHERE slug = ? AND is_bot = 0 AND viewed_at >= ?
-       GROUP BY referrer`,
+       GROUP BY referrer ORDER BY n DESC LIMIT ?`,
+    )
+      .bind(slug, now - VIEW_PII_RETENTION_SECONDS, STATS_TOP_REFERRERS)
+      .all<{ referrer: string | null; n: number }>(),
+    // The tail is derived, not listed. Total views in the same window minus the
+    // top buckets gives 'other' without reading a row per distinct source.
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM views
+       WHERE slug = ? AND is_bot = 0 AND viewed_at >= ?`,
     )
       .bind(slug, now - VIEW_PII_RETENTION_SECONDS)
-      .all<{ referrer: string | null; n: number }>(),
+      .first<{ n: number }>(),
     // Bucketed by integer division on the stored unix seconds — no date
     // functions, so the grouping key is index-friendly and timezone-free.
     c.env.DB.prepare(
@@ -89,7 +103,7 @@ statsRoute.get('/share/:slug/stats', async (c) => {
     uniqueViewers: counts?.unique_viewers ?? 0,
     botViews: counts?.bot_views ?? 0,
     lastViewedAt: counts?.last_viewed ? new Date(counts.last_viewed * 1000).toISOString() : null,
-    referrers: summarizeReferrers(referrerRows.results ?? []),
+    referrers: summarizeReferrers(referrerRows.results ?? [], referrerTotal?.n ?? 0),
     dailyViews: buildTrend(dailyRows.results ?? [], trendStart),
     deleted: row.status === 'deleted',
   };
@@ -117,31 +131,15 @@ function buildTrend(rows: { day: number; n: number }[], trendStart: number): Dai
 }
 
 /**
- * Reduces a raw Referer header to the hostname we report to the sender.
- *
- * Drops path and query deliberately: a referrer URL can itself be sensitive
- * (the linking page may be private), and the host is the whole signal here.
- * `www.` is stripped so google.com and www.google.com don't split one source
- * into two rows.
- */
-function referrerSource(raw: string | null): string {
-  if (!raw) return 'direct';
-  try {
-    const host = new URL(raw).hostname.replace(/^www\./, '');
-    return host || 'direct';
-  } catch {
-    // Referer is attacker-controllable and not guaranteed to be a valid URL.
-    return 'other';
-  }
-}
-
-/**
  * Folds grouped referrer rows into at most STATS_TOP_REFERRERS + 1 buckets.
  *
  * The tail is summed into 'other' rather than dropped so the bucket views
  * always add up to the total view count.
  */
-function summarizeReferrers(rows: { referrer: string | null; n: number }[]): ReferrerStat[] {
+function summarizeReferrers(
+  rows: { referrer: string | null; n: number }[],
+  windowTotal: number,
+): ReferrerStat[] {
   const bySource = new Map<string, number>();
   for (const r of rows) {
     const source = referrerSource(r.referrer);
@@ -152,11 +150,19 @@ function summarizeReferrers(rows: { referrer: string | null; n: number }[]): Ref
   const byViewsDesc = (a: ReferrerStat, b: ReferrerStat) =>
     b.views - a.views || a.source.localeCompare(b.source);
 
-  const sorted = [...bySource].map(([source, views]) => ({ source, views })).sort(byViewsDesc);
-  if (sorted.length <= STATS_TOP_REFERRERS) return sorted;
+  const top = [...bySource].map(([source, views]) => ({ source, views })).sort(byViewsDesc);
 
-  const top = sorted.slice(0, STATS_TOP_REFERRERS);
-  const tailViews = sorted.slice(STATS_TOP_REFERRERS).reduce((sum, r) => sum + r.views, 0);
+  // The tail is what the LIMIT left behind, derived rather than counted: total
+  // views in the window minus what the top buckets account for. This is why the
+  // buckets still reconcile with the window total even though the query never
+  // sees the long tail.
+  //
+  // Rows written before referrers were normalised can group more finely than
+  // they report, so two top rows can fold into one source here and leave the
+  // arithmetic slightly generous. Clamped at zero rather than allowed to go
+  // negative — a negative bucket is worse than a small overcount.
+  const tailViews = Math.max(0, windowTotal - top.reduce((sum, r) => sum + r.views, 0));
+  if (tailViews === 0) return top;
 
   // 'other' may already be in the top slice (unparseable referrers); merging
   // avoids emitting the same source twice.

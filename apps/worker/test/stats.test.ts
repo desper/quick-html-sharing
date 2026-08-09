@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:test';
-import { STATS_TREND_DAYS, type ShareStats } from '@qhs/shared';
+import { STATS_TOP_REFERRERS, STATS_TREND_DAYS, type ShareStats } from '@qhs/shared';
 import { describe, expect, it } from 'vitest';
 import { dashboardFetch, shareFetch, uploadHtml } from './_helpers';
 
@@ -259,6 +259,47 @@ describe('stats referrer breakdown', () => {
     ]);
     const summed = s.referrers.reduce((total, r) => total + r.views, 0);
     expect(summed).toBe(s.views);
+  });
+
+  it('stays bounded when a caller mints a distinct referrer per view', async () => {
+    const slug = await createShare();
+    // `Referer` is client-supplied, so anyone holding the share URL can make
+    // every hit its own group. The old query had no LIMIT and returned one row
+    // per group to the Worker before folding — an unbounded D1 read and
+    // response size on a public endpoint. 60 unique hosts is not an attack,
+    // just enough to prove the bound holds without the count doing the work.
+    const HOSTS = 60;
+    for (let i = 0; i < HOSTS; i++) {
+      await seedView(slug, { referrer: `https://host-${i}.example/${i}` });
+    }
+
+    const s = await getStats(slug);
+    expect(s.views).toBe(HOSTS);
+    // At most the top N plus one derived tail, regardless of how many exist.
+    expect(s.referrers.length).toBeLessThanOrEqual(STATS_TOP_REFERRERS + 1);
+    // And the tail is still honest: buckets reconcile with the total.
+    expect(s.referrers.reduce((total, r) => total + r.views, 0)).toBe(s.views);
+  });
+
+  it('stores the hostname, not the raw header, so path and query never land in D1', async () => {
+    const slug = await createShare();
+    // Through the real renderer, not seedView — seedView INSERTs directly and
+    // would skip the very normalisation under test. Every other referrer test
+    // in this file goes around the write path, which is exactly why nothing
+    // caught that the raw header was being persisted.
+    await shareFetch(`/${slug}`, {
+      headers: {
+        'CF-Connecting-IP': '203.0.113.90',
+        Referer: 'https://www.example.com/private/path?token=leaky',
+      },
+    });
+
+    const row = await env.DB.prepare(`SELECT referrer FROM views WHERE slug = ?`)
+      .bind(slug)
+      .first<{ referrer: string | null }>();
+    // Normalising at write time is what lets the query ORDER BY/LIMIT safely.
+    // It also means a sensitive linking URL is never persisted at all.
+    expect(row?.referrer).toBe('example.com');
   });
 
   it('emits a single other bucket when unparseable referrers already rank top', async () => {

@@ -4,6 +4,7 @@ import { isBotUserAgent } from '../lib/bot';
 import { hashIp } from '../lib/hash';
 import { getClientIp } from '../lib/ip';
 import { htmlObjectKey } from '../lib/objectKey';
+import { normalizeReferrer } from '../lib/referrer';
 import { sharePageSecurityHeaders } from '../middleware/security-headers';
 import type { AppEnv } from '../types';
 
@@ -58,7 +59,10 @@ async function recordView(c: Context<AppEnv>, slug: string) {
     const ipHash = await hashIp(getClientIp(c), c.env.IP_HASH_SALT);
     const now = Math.floor(Date.now() / 1000);
     const ua = c.req.header('User-Agent') ?? null;
-    const referrer = c.req.header('Referer') ?? null;
+    // Normalised here, not in the stats query. The header is attacker-supplied
+    // and unbounded; storing it raw let anyone with the share URL create
+    // unlimited GROUP BY rows. See lib/referrer.ts.
+    const referrer = normalizeReferrer(c.req.header('Referer'));
     // Classified at write time, not at read time: the UA is only meaningful
     // here, and a stored flag keeps the stats query a plain indexed filter.
     const isBot = isBotUserAgent(ua) ? 1 : 0;
