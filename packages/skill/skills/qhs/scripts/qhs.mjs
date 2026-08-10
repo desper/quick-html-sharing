@@ -97,18 +97,21 @@ async function versionCredentials(slug, editTokenFlag) {
  * up in server logs. Exactly one credential is sent; the server treats a bearer
  * as authoritative and ignores a body token.
  */
-function credentialInit(creds) {
+function credentialPayload(creds) {
   return creds.syncKey
     ? {
-        method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.syncKey}` },
         body: '{}',
       }
     : {
-        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ editToken: creds.editToken }),
       };
+}
+
+/** Version endpoints are all POST; delete is the one that is not. */
+function credentialInit(creds) {
+  return { method: 'POST', ...credentialPayload(creds) };
 }
 
 // ---------- http client -------------------------------------------------------
@@ -204,16 +207,30 @@ const commands = {
     const { flags, positional } = parseFlags(argv);
     const slug = positional[0];
     if (!slug) throw new Error('Usage: qhs delete <slug>');
-    const token = flags['edit-token'] ?? (await findShare(slug))?.editToken;
-    if (!token) {
+    // The server has always accepted a sync-key bearer here; this script asked
+    // for an edit token and gave up without one, so a share created on another
+    // machine could not be deleted from the agent even though the API allowed
+    // it. versionCredentials already does the right fallback — delete simply
+    // never called it.
+    const creds = await versionCredentials(slug, flags['edit-token']);
+
+    // The gate is only on the path that lost its friction. Holding a share's
+    // edit token was itself evidence the caller meant that share; with a sync
+    // code a bare slug is enough, and an agent can lift a slug out of the
+    // conversation. Deleting is permanent, so make it say so out loud.
+    if (creds.syncKey && !flags.confirm) {
       throw new Error(
-        `No edit token for "${slug}". Pass --edit-token=<value> from the share's edit URL.`,
+        [
+          `"${slug}" was not created on this machine, so deleting it would use your`,
+          'sync code. This is permanent. Re-run with --confirm if you mean',
+          `https://s.qhs.fyi/${slug}.`,
+        ].join(' '),
       );
     }
+
     const r = await call('/api/share/' + encodeURIComponent(slug), {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ editToken: token }),
+      ...credentialPayload(creds),
     });
     await forgetShare(slug);
     console.log(JSON.stringify(r, null, 2));
@@ -229,9 +246,70 @@ const commands = {
     console.log(JSON.stringify(r, null, 2));
   },
 
+  /**
+   * Union of what this machine remembers and what the sync code reaches.
+   *
+   * Union, not replacement: a share created before a sync code was saved has
+   * owner_key_hash = NULL server-side and will never come back from
+   * /api/my-shares, so treating the remote list as the whole truth would drop
+   * entries this command used to print. `title` only exists locally — the API
+   * contract excludes it as local-only metadata.
+   *
+   * The same shape lives in the MCP package's shares.ts. Duplicated on purpose:
+   * this script is deliberately standalone (skill = markdown + one helper, no
+   * dependency on the npm package), and that is the price of it.
+   */
   async list() {
     const store = await loadStore();
-    console.log(JSON.stringify({ shares: store.shares }, null, 2));
+    const local = store.shares ?? [];
+    const byLocal = new Map(local.map((s) => [s.slug, s]));
+    const merged = new Map();
+
+    let remoteError = null;
+    if (store.syncKey) {
+      try {
+        let cursor = null;
+        for (let page = 0; page < 5; page++) {
+          const q = `?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+          const r = await call(`/api/my-shares${q}`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${store.syncKey}` },
+          });
+          for (const item of r.shares) {
+            const mine = byLocal.get(item.slug);
+            merged.set(item.slug, {
+              ...item,
+              ...(mine?.title ? { title: mine.title } : {}),
+              local: mine !== undefined,
+              synced: true,
+            });
+          }
+          cursor = r.nextCursor;
+          if (!cursor) break;
+        }
+      } catch (err) {
+        // A dead network must not turn "here are your shares" into an error;
+        // the local list is still good and is all this command had before.
+        remoteError = err.message;
+      }
+    }
+
+    for (const mine of local) {
+      if (merged.has(mine.slug)) continue;
+      const { editToken: _editToken, editUrl: _editUrl, ...rest } = mine;
+      merged.set(mine.slug, { ...rest, local: true, synced: false });
+    }
+
+    const shares = [...merged.values()].sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt) || a.slug.localeCompare(b.slug),
+    );
+    console.log(
+      JSON.stringify(
+        { shares, ...(remoteError ? { warning: `local list only: ${remoteError}` } : {}) },
+        null,
+        2,
+      ),
+    );
   },
 
   async versions(argv) {
