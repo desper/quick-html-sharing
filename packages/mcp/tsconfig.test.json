@@ -1,0 +1,13 @@
+// Typechecks the tests without letting them into the published build.
+//
+// tsconfig.json has rootDir: ./src so `tsc` emits exactly what ships; that also
+// puts test/ outside the program, so type errors there would go unnoticed until
+// runtime. This config covers both trees and emits nothing.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "test/**/*"]
+}
