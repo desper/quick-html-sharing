@@ -1,5 +1,11 @@
 import { env } from 'cloudflare:test';
-import { STATS_TOP_REFERRERS, STATS_TREND_DAYS, type ShareStats } from '@qhs/shared';
+import {
+  STATS_TOP_LOCATIONS,
+  STATS_TOP_REFERRERS,
+  STATS_TREND_DAYS,
+  type ShareStats,
+  VIEW_PII_RETENTION_SECONDS,
+} from '@qhs/shared';
 import { describe, expect, it } from 'vitest';
 import { dashboardFetch, shareFetch, uploadHtml } from './_helpers';
 
@@ -22,10 +28,18 @@ const NOW = Math.floor(Date.now() / 1000);
 
 async function seedView(
   slug: string,
-  opts: { ipHash?: string; referrer?: string | null; at?: number; isBot?: boolean } = {},
+  opts: {
+    ipHash?: string;
+    referrer?: string | null;
+    at?: number;
+    isBot?: boolean;
+    country?: string | null;
+    city?: string | null;
+  } = {},
 ) {
   await env.DB.prepare(
-    `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot, country, city)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       slug,
@@ -36,6 +50,8 @@ async function seedView(
       null,
       opts.referrer ?? null,
       opts.isBot ? 1 : 0,
+      opts.country ?? null,
+      opts.city ?? null,
     )
     .run();
 }
@@ -354,5 +370,102 @@ describe('stats referrer breakdown', () => {
     expect(s.referrers.filter((r) => r.source === 'other')).toHaveLength(1);
     expect(s.referrers.find((r) => r.source === 'other')?.views).toBe(12);
     expect(s.referrers.reduce((total, r) => total + r.views, 0)).toBe(s.views);
+  });
+});
+
+describe('stats location breakdown', () => {
+  const BROWSER = { 'User-Agent': 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/140.0' };
+
+  // The referrer regression taught this: a write path and a read path that are
+  // each tested against their own idea of the format can both be "right" and
+  // still disagree. So the first test here goes through the real renderer with
+  // an injected `request.cf`, which is the only thing that proves the column a
+  // view writes is the column the breakdown reads.
+  it('round-trips request.cf through the renderer into the breakdown', async () => {
+    const slug = await createShare();
+    const visit = (cf: { country?: string; city?: string }, ip: string) =>
+      shareFetch(`/${slug}`, {
+        headers: { ...BROWSER, 'CF-Connecting-IP': ip },
+        cf,
+      } as RequestInit);
+
+    await visit({ country: 'TW', city: 'Taipei' }, '203.0.113.11');
+    await visit({ country: 'TW', city: 'Taipei' }, '203.0.113.12');
+    await visit({ country: 'JP', city: 'Tokyo' }, '203.0.113.13');
+    // Country resolved, city not — the common half-resolved case (VPN,
+    // corporate egress, mobile carrier). Must not render as "Taipei, " or ", TW".
+    await visit({ country: 'US' }, '203.0.113.14');
+
+    const s = await getStats(slug);
+    expect(s.locations).toEqual([
+      { country: 'TW', city: 'Taipei', label: 'Taipei, TW', views: 2 },
+      { country: 'JP', city: 'Tokyo', label: 'Tokyo, JP', views: 1 },
+      { country: 'US', city: null, label: 'US', views: 1 },
+    ]);
+  });
+
+  it("labels a view with no resolved country as 'unknown'", async () => {
+    const slug = await createShare();
+    await shareFetch(`/${slug}`, { headers: BROWSER } as RequestInit);
+    const s = await getStats(slug);
+    expect(s.locations).toEqual([{ country: null, city: null, label: 'unknown', views: 1 }]);
+  });
+
+  it('treats an empty string as unresolved rather than a place', async () => {
+    const slug = await createShare();
+    await seedView(slug, { country: 'TW', city: '' });
+    await seedView(slug, { country: '', city: '' });
+    const s = await getStats(slug);
+    expect(s.locations).toEqual([
+      { country: 'TW', city: null, label: 'TW', views: 1 },
+      { country: null, city: null, label: 'unknown', views: 1 },
+    ]);
+  });
+
+  it('keeps crawler traffic out of the location breakdown', async () => {
+    const slug = await createShare();
+    await seedView(slug, { country: 'TW', city: 'Taipei' });
+    await seedView(slug, { country: 'US', city: 'Ashburn', isBot: true });
+    const s = await getStats(slug);
+    expect(s.locations).toEqual([
+      { country: 'TW', city: 'Taipei', label: 'Taipei, TW', views: 1 },
+    ]);
+  });
+
+  it('folds the long tail into other so bucket views still sum to total views', async () => {
+    const slug = await createShare();
+    // STATS_TOP_LOCATIONS + 2 distinct cities, descending by views, so exactly
+    // two fall past the cut and have to reappear in the tail.
+    const cities = Array.from({ length: STATS_TOP_LOCATIONS + 2 }, (_, i) => `City${i}`);
+    for (const [i, city] of cities.entries()) {
+      for (let n = 0; n < cities.length - i; n++) {
+        await seedView(slug, { country: 'TW', city });
+      }
+    }
+    const s = await getStats(slug);
+    expect(s.locations).toHaveLength(STATS_TOP_LOCATIONS + 1);
+    expect(s.locations.filter((l) => l.label === 'other')).toHaveLength(1);
+    // 2 + 1 views from the two cities that got cut.
+    expect(s.locations.find((l) => l.label === 'other')?.views).toBe(3);
+    expect(s.locations.reduce((total, l) => total + l.views, 0)).toBe(s.views);
+  });
+
+  it('scopes the breakdown to the retention window', async () => {
+    const slug = await createShare();
+    // Past the window the sweep has nulled country/city, so those rows would
+    // land in 'unknown' and grow it forever. Excluding them keeps the breakdown
+    // describing views whose location we actually still hold.
+    await seedView(slug, {
+      country: 'TW',
+      city: 'Taipei',
+      at: NOW - VIEW_PII_RETENTION_SECONDS - 60,
+    });
+    await seedView(slug, { country: 'JP', city: 'Tokyo' });
+    const s = await getStats(slug);
+    expect(s.locations).toEqual([
+      { country: 'JP', city: 'Tokyo', label: 'Tokyo, JP', views: 1 },
+    ]);
+    // The old view still counts toward the headline total.
+    expect(s.views).toBe(2);
   });
 });

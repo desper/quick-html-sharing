@@ -173,6 +173,34 @@ export interface ReferrerStat {
   views: number;
 }
 
+/**
+ * How many location buckets the stats endpoint returns before folding the rest
+ * into 'other'. Larger than STATS_TOP_REFERRERS because cities spread wider
+ * than referring hosts do — a link passed around a company lands in a handful
+ * of hosts but a dozen cities.
+ */
+export const STATS_TOP_LOCATIONS = 8;
+
+export interface LocationStat {
+  /** ISO 3166-1 alpha-2 as resolved by Cloudflare, or null if unresolved. */
+  country: string | null;
+  /**
+   * City as resolved by Cloudflare. Frequently null even when `country` is
+   * not — CF resolves a city only when it is confident, and a VPN, a corporate
+   * egress, or a mobile carrier often leaves it blank. Null means unknown, not
+   * "somewhere else".
+   */
+  city: string | null;
+  /**
+   * Display label, precomputed so every client renders the same string:
+   * `"Taipei, TW"`, or `"TW"` when the city is unknown, or the synthetic
+   * buckets 'unknown' (no country either) and 'other' (the tail past
+   * STATS_TOP_LOCATIONS).
+   */
+  label: string;
+  views: number;
+}
+
 export interface ShareStats {
   slug: string;
   createdAt: string; // ISO
@@ -197,6 +225,13 @@ export interface ShareStats {
    * referrer views can sum to less than `views` on an old share.
    */
   referrers: ReferrerStat[];
+  /**
+   * Descending by views, at most STATS_TOP_LOCATIONS + 1 entries. Same
+   * retention window as `referrers`, for the same reason: past the window the
+   * sweep has nulled the columns, and counting those rows would inflate
+   * 'unknown' with views whose location we simply no longer keep.
+   */
+  locations: LocationStat[];
   /**
    * Human views per UTC day for the last STATS_TREND_DAYS, oldest first,
    * including zero-view days. Gaps are filled server-side so a client can
@@ -297,6 +332,9 @@ export interface ViewRow {
   ua: string | null;
   referrer: string | null;
   is_bot: 0 | 1;
+  /** Resolved by Cloudflare at write time; nulled by the retention sweep. */
+  country: string | null;
+  city: string | null;
 }
 
 export interface ReportRow {

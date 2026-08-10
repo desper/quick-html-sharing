@@ -10,7 +10,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import {
   type DailyViewStat,
+  type LocationStat,
   type ReferrerStat,
+  VERSION,
   type VersionCredentials,
   deleteShare,
   editHtml,
@@ -34,7 +36,7 @@ import {
 
 const server = new McpServer({
   name: 'quick-html-share',
-  version: '0.2.3',
+  version: VERSION,
 });
 
 // ---------- qhs_share ---------------------------------------------------------
@@ -226,6 +228,18 @@ function formatReferrers(referrers: ReferrerStat[] | undefined): string {
 }
 
 /**
+ * Renders the location breakdown on one line.
+ *
+ * Tolerates the field being absent for the same reason formatReferrers does: a
+ * published package outlives the worker deploy it was built against, and an
+ * older server simply will not send it.
+ */
+function formatLocations(locations: LocationStat[] | undefined): string {
+  if (!locations || locations.length === 0) return 'none yet';
+  return locations.map((l) => `${l.label} (${l.views})`).join(', ');
+}
+
+/**
  * Sums the tail of the daily series. A recent-activity number answers "is it
  * still getting traffic" — the question people actually ask — which a lifetime
  * total can't, and 30 raw daily buckets bury.
@@ -264,6 +278,7 @@ server.tool(
             `Link-preview/crawler fetches (not counted as views): ${stats.botViews ?? 0}`,
             `Last viewed: ${stats.lastViewedAt ?? 'never'}`,
             `Traffic sources: ${formatReferrers(stats.referrers)}`,
+            `Viewer locations: ${formatLocations(stats.locations)}`,
             `Deleted: ${stats.deleted ? 'yes' : 'no'}`,
           ].join('\n'),
         },

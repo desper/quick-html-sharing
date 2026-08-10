@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS views (
     -- Kept (not dropped) so "Slack previewed it twice, nobody opened it" is a
     -- visible state; excluded from the headline `views` count.
     is_bot      INTEGER NOT NULL DEFAULT 0,
+    -- Resolved by Cloudflare per request (`request.cf`), so no GeoIP lookup and
+    -- no third party. Nullable and staying that way: CF does not always resolve
+    -- a city, and a missing value must read as "unknown", never as a guess.
+    -- Viewer PII — expires with ua/referrer at VIEW_PII_RETENTION_SECONDS.
+    country     TEXT,
+    city        TEXT,
     FOREIGN KEY (slug) REFERENCES shares(slug)
 );
 
@@ -111,13 +117,18 @@ CREATE INDEX IF NOT EXISTS idx_views_slug_viewed
 CREATE INDEX IF NOT EXISTS idx_views_slug_human
     ON views (slug, is_bot, viewed_at DESC);
 
--- Retention sweep (anonymizeOldViews) covers exactly the rows still holding
--- raw ua/referrer. Rows drop out of the index as they are anonymized, so it
+-- Retention sweep (anonymizeOldViews) covers exactly the rows still holding a
+-- raw viewer field. Rows drop out of the index as they are anonymized, so it
 -- stays small and the sweep's frequent no-op runs are an empty probe instead
 -- of a full scan.
+--
+-- All four fields are in the predicate, not just ua/referrer: a view with no
+-- User-Agent header but a resolved location would otherwise sit outside the
+-- index and never be swept.
 CREATE INDEX IF NOT EXISTS idx_views_retention
     ON views (viewed_at)
-    WHERE ua IS NOT NULL OR referrer IS NOT NULL;
+    WHERE ua IS NOT NULL OR referrer IS NOT NULL
+       OR country IS NOT NULL OR city IS NOT NULL;
 
 -- ----------------------------------------------------------------------------
 -- reports: abuse / phishing reports.

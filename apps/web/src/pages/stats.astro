@@ -37,6 +37,11 @@ import Base from '../layouts/Base.astro';
       <div class="muted">Traffic sources</div>
       <ul id="referrers" style="list-style: none; padding: 0; margin: 8px 0 0"></ul>
     </section>
+
+    <section id="locations-section" style="margin-top: 24px" hidden>
+      <div class="muted">Viewer locations</div>
+      <ul id="locations" style="list-style: none; padding: 0; margin: 8px 0 0"></ul>
+    </section>
     <p class="muted" id="deleted-banner" hidden style="color: var(--danger)">
       This share is deleted.
     </p>
@@ -84,6 +89,8 @@ import Base from '../layouts/Base.astro';
     const trend = document.getElementById('trend') as HTMLElement;
     const referrersSection = document.getElementById('referrers-section') as HTMLElement;
     const referrers = document.getElementById('referrers') as HTMLElement;
+    const locationsSection = document.getElementById('locations-section') as HTMLElement;
+    const locations = document.getElementById('locations') as HTMLElement;
     const lastViewed = document.getElementById('last-viewed') as HTMLElement;
     const createdAt = document.getElementById('created-at') as HTMLElement;
     const openShare = document.getElementById('open-share') as HTMLAnchorElement;
@@ -125,6 +132,43 @@ import Base from '../layouts/Base.astro';
         referrers.append(li);
       }
       referrersSection.hidden = false;
+    }
+
+    /**
+     * Same textContent discipline as renderReferrers. The label is server-built
+     * from Cloudflare's own geo fields rather than from anything the viewer
+     * sends, so it is not attacker-controlled the way a Referer is — but it
+     * still lands on the dashboard origin, and "this particular string happens
+     * to be safe" is not a rule anyone can maintain.
+     */
+    function renderLocations(list: { label: string; views: number }[]) {
+      locations.replaceChildren();
+      if (!list || list.length === 0) {
+        locationsSection.hidden = true;
+        return;
+      }
+      for (const l of list) {
+        const li = document.createElement('li');
+        li.className = 'row';
+        li.style.justifyContent = 'space-between';
+        li.style.padding = '4px 0';
+
+        const label = document.createElement('span');
+        label.textContent =
+          l.label === 'unknown'
+            ? 'Unknown (VPN, corporate network, or unresolved)'
+            : l.label === 'other'
+              ? 'Other'
+              : l.label;
+
+        const count = document.createElement('span');
+        count.className = 'muted';
+        count.textContent = String(l.views);
+
+        li.append(label, count);
+        locations.append(li);
+      }
+      locationsSection.hidden = false;
     }
 
     /**
@@ -178,6 +222,7 @@ import Base from '../layouts/Base.astro';
         botNote.hidden = s.botViews === 0;
         renderTrend(s.dailyViews);
         renderReferrers(s.referrers);
+        renderLocations(s.locations);
         lastViewed.textContent = s.lastViewedAt
           ? new Date(s.lastViewedAt).toLocaleString()
           : 'never';

@@ -44,7 +44,8 @@ export async function cleanupStalePending(env: Bindings): Promise<number> {
 }
 
 /**
- * Strips `ua` and `referrer` from view rows older than the retention window.
+ * Strips every raw viewer field — `ua`, `referrer`, `country`, `city` — from
+ * view rows older than the retention window.
  *
  * Anonymize rather than delete: deleting rows would rewrite historical view
  * counts (a share's "127 views" would shrink on its own), which is worse than
@@ -300,7 +301,12 @@ export async function anonymizeOldViews(env: Bindings): Promise<number> {
   //
   // Each pass shrinks the candidate set (a cleared row no longer satisfies the
   // NOT NULL half of the predicate), so progress is monotonic and terminates.
-  const CANDIDATE_PREDICATE = `(ua IS NOT NULL OR referrer IS NOT NULL)
+  // All four raw viewer fields, not just ua/referrer. Location is at least as
+  // identifying as a user agent, so it expires on the same clock — and leaving
+  // it out of the predicate would also strand rows whose ua and referrer were
+  // already NULL but which still carried a city.
+  const CANDIDATE_PREDICATE = `(ua IS NOT NULL OR referrer IS NOT NULL
+            OR country IS NOT NULL OR city IS NOT NULL)
        AND (viewed_at < ?
             OR slug IN (SELECT slug FROM shares WHERE status = 'deleted'))`;
 
@@ -318,7 +324,7 @@ export async function anonymizeOldViews(env: Bindings): Promise<number> {
     if (ids.length === 0) break;
 
     const result = await env.DB.prepare(
-      `UPDATE views SET ua = NULL, referrer = NULL
+      `UPDATE views SET ua = NULL, referrer = NULL, country = NULL, city = NULL
        WHERE ${CANDIDATE_PREDICATE}
          AND rowid BETWEEN ? AND ?`,
     )

@@ -1,6 +1,8 @@
 import {
   type DailyViewStat,
+  type LocationStat,
   type ReferrerStat,
+  STATS_TOP_LOCATIONS,
   STATS_TOP_REFERRERS,
   STATS_TREND_DAYS,
   type ShareRow,
@@ -42,7 +44,7 @@ statsRoute.get('/share/:slug/stats', async (c) => {
 
   // Independent aggregates over the same slug — no transaction needed, stats
   // are a snapshot and a view landing between them is not a bug.
-  const [counts, referrerRows, referrerTotal, dailyRows] = await Promise.all([
+  const [counts, referrerRows, referrerTotal, locationRows, dailyRows] = await Promise.all([
     // Human views and bot views come from one pass: SUM(is_bot) rather than a
     // second query, since both numbers are always reported together.
     c.env.DB.prepare(
@@ -85,6 +87,19 @@ statsRoute.get('/share/:slug/stats', async (c) => {
     )
       .bind(slug, now - VIEW_PII_RETENTION_SECONDS)
       .first<{ n: number }>(),
+    // Same shape as the referrer query, and bounded for a different reason.
+    // Country and city come from Cloudflare rather than from the client, so
+    // there is no cardinality attack here — but a link that genuinely travels
+    // still lands in more cities than anyone wants listed, and the tail is not
+    // information. Shares the referrer window so the two breakdowns describe
+    // the same set of views.
+    c.env.DB.prepare(
+      `SELECT country, city, COUNT(*) AS n FROM views
+       WHERE slug = ? AND is_bot = 0 AND viewed_at >= ?
+       GROUP BY country, city ORDER BY n DESC LIMIT ?`,
+    )
+      .bind(slug, now - VIEW_PII_RETENTION_SECONDS, STATS_TOP_LOCATIONS)
+      .all<{ country: string | null; city: string | null; n: number }>(),
     // Bucketed by integer division on the stored unix seconds — no date
     // functions, so the grouping key is index-friendly and timezone-free.
     c.env.DB.prepare(
@@ -104,6 +119,9 @@ statsRoute.get('/share/:slug/stats', async (c) => {
     botViews: counts?.bot_views ?? 0,
     lastViewedAt: counts?.last_viewed ? new Date(counts.last_viewed * 1000).toISOString() : null,
     referrers: summarizeReferrers(referrerRows.results ?? [], referrerTotal?.n ?? 0),
+    // Reuses the referrer window total — both breakdowns cover the same rows,
+    // so a second identical COUNT would be a wasted query.
+    locations: summarizeLocations(locationRows.results ?? [], referrerTotal?.n ?? 0),
     dailyViews: buildTrend(dailyRows.results ?? [], trendStart),
     deleted: row.status === 'deleted',
   };
@@ -128,6 +146,64 @@ function buildTrend(rows: { day: number; n: number }[], trendStart: number): Dai
       views: byDay.get(day) ?? 0,
     };
   });
+}
+
+/**
+ * Turns a (country, city) pair into the one string every client renders.
+ *
+ * Precomputed server-side so the web page, the MCP server and the skill cannot
+ * drift into three different renderings of the same row — and so the rule for
+ * a half-resolved location (country but no city, which is common) is decided
+ * once, here.
+ */
+function locationLabel(country: string | null, city: string | null): string {
+  if (!country) return 'unknown';
+  return city ? `${city}, ${country}` : country;
+}
+
+/**
+ * Folds grouped location rows into at most STATS_TOP_LOCATIONS + 1 buckets.
+ *
+ * Mirrors summarizeReferrers, including deriving the tail from the window
+ * total rather than listing it. The extra wrinkle is that two grouped rows can
+ * collapse into one label — (TW, null) and (TW, '') both read as 'TW' — so the
+ * fold happens on the label, not on the raw pair.
+ */
+function summarizeLocations(
+  rows: { country: string | null; city: string | null; n: number }[],
+  windowTotal: number,
+): LocationStat[] {
+  const byLabel = new Map<string, LocationStat>();
+  for (const r of rows) {
+    // Empty string is not a location. CF sends null for unresolved, but a
+    // blank would otherwise render as "Taipei, " or a bare comma.
+    const country = r.country || null;
+    const city = r.city || null;
+    const label = locationLabel(country, city);
+    const existing = byLabel.get(label);
+    if (existing) {
+      existing.views += r.n;
+    } else {
+      byLabel.set(label, { country, city, label, views: r.n });
+    }
+  }
+
+  const byViewsDesc = (a: LocationStat, b: LocationStat) =>
+    b.views - a.views || a.label.localeCompare(b.label);
+  const top = [...byLabel.values()].sort(byViewsDesc);
+
+  // Clamped at zero for the same reason as the referrer tail: labels can merge
+  // rows, and a negative bucket is worse than a small overcount.
+  const tailViews = Math.max(0, windowTotal - top.reduce((sum, r) => sum + r.views, 0));
+  if (tailViews === 0) return top;
+
+  const existingOther = top.find((r) => r.label === 'other');
+  if (existingOther) {
+    existingOther.views += tailViews;
+  } else {
+    top.push({ country: null, city: null, label: 'other', views: tailViews });
+  }
+  return top.sort(byViewsDesc);
 }
 
 /**

@@ -26,10 +26,11 @@ Every share has a stats page (`/stats?slug=…`, also `qhs_stats` from an agent)
 
 - **Views** and **unique viewers** — the latter from salted IP hashes, so it's an approximation: office NAT undercounts, mobile data can overcount.
 - **Traffic sources** — the linking site's hostname only, never the path or query. `direct` covers typed URLs, bookmarks and most chat apps.
+- **Viewer locations** — country and, when Cloudflare is confident, city. Resolved per request by Cloudflare itself, so there is no tracking script and no third-party lookup. Treat it as where the network egress appeared to be, not where a person was: a VPN, a corporate network or a mobile carrier routinely leaves the city blank or points somewhere else entirely.
 - **A 30-day trend** — views per UTC day, including the quiet days.
 - **Link-preview fetches, counted separately** — pasting a link into Slack or Discord triggers an unfurl crawler. Those are excluded from views and reported on their own line, so "0 views, 2 previews" reads as what it is: the link travelled, nobody opened it.
 
-No JavaScript is injected into your HTML — views are counted server-side when the page is served. Viewer user agents and referrers are dropped after 90 days, or immediately when you delete the share; the view counts survive.
+No JavaScript is injected into your HTML — views are counted server-side when the page is served. Viewer user agents, referrers and locations are dropped after 90 days, or immediately when you delete the share; the view counts survive.
 
 ## Install in your coding agent
 
