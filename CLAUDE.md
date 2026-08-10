@@ -57,6 +57,12 @@ web "Recent on this device" pattern). **Endpoint is hardcoded** to the hosted
 worker — `QHS_ENDPOINT` env var exists only for internal dev/test and must NOT be
 documented for end users (it would let them self-host and undercut monetization).
 
+`packages/mcp/Dockerfile` exists **only** for third-party MCP directories (Glama)
+to build + introspect the stdio server for a listing score — it is not part of
+the deploy path (that's still `wrangler deploy`, no containers). It uses its own
+`tsconfig.docker.json` (no `../../tsconfig.json` extends) because those directories
+build with `packages/mcp/` as the Docker context, not the repo root.
+
 ## Architecture decisions (DO NOT change without re-running /plan-eng-review)
 
 1. **Edit auth via URL fragment (`#edit=token`)**, NEVER URL path or query string. Fragments don't go to server logs.
