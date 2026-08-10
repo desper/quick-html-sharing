@@ -62,6 +62,14 @@ QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs
 
 Idempotent — re-deleting an already-deleted share returns ok. After this the share URL returns 404.
 
+For a share created on **another** machine there is no local edit token, so the delete falls back to the saved sync code and refuses until you add `--confirm`:
+
+```bash
+node "$QHS" delete <slug> --confirm
+```
+
+Ask the user first, and name the URL you are about to take down. Holding a share's edit token used to be its own evidence that you meant *that* share; with a sync code a bare slug is enough, and a slug mentioned in passing is easy to act on by mistake. Deletion is permanent — unlike a bad edit, there is no version to restore.
+
 ### Workflow: stats
 
 ```bash
@@ -82,7 +90,11 @@ Returns `{views, uniqueViewers, botViews, lastViewedAt, createdAt, referrers, da
 QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs 2>/dev/null | head -1) && node "$QHS" list
 ```
 
-Lists shares created from this machine via either this skill or the MCP server. Does NOT include shares created from other machines (we never store them server-side under any account — there are no accounts).
+Lists shares created from this machine via either this skill or the MCP server, plus — if a sync code is saved — every share created on the user's other machines.
+
+Each entry carries `local` and `synced`. `local: true` means this machine holds the edit token, so `edit` works; `local: false` means it came back from the server under the sync code and only `preview` / `restore` / `delete --confirm` apply. `title` only exists for shares created here — the server never stores it.
+
+Shares created before a sync code was saved are local-only forever (nothing enrolled them), which is why the list is a union of both sources rather than whichever one answered.
 
 ### Workflow: version history
 
@@ -111,7 +123,7 @@ QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs
 
 It is stored in `~/.qhs/shares.json` and only ever reaches the server as a hash. The sync code is the same one the web dashboard's My Shares page uses.
 
-Note the asymmetry, and don't promise more than it does: a sync code lets you **list, preview, and restore** versions from any machine, but **not** edit — editing still needs that share's edit token on this device.
+Note the asymmetry, and don't promise more than it does: a sync code lets you **list, preview, restore, and delete** from any machine, but **not** edit — editing still needs that share's edit token on this device. Restoring republishes bytes the server already holds; editing means supplying new content, which is the one thing a sync code was never meant to carry.
 
 ## Output format
 
