@@ -1,0 +1,30 @@
+{
+  "slug": "qklkr167srj8",
+  "url": "https://s.qhs.fyi/qklkr167srj8",
+  "title": "skill cli smoke",
+  "latestVersion": 1,
+  "remoteDeleted": false,
+  "hasEditToken": true,
+  "versions": [
+    {
+      "version": 1,
+      "file": "v1.html",
+      "hash": "93e308c7caafcdf6f152f23bf45e447b48a431a3ee940ce3f9993b1f09a2ad80",
+      "size": 1092,
+      "origin": "capture",
+      "note": null,
+      "discoveredAt": 1786232786583,
+      "sources": []
+    }
+  ],
+  "chats": [
+    {
+      "chatId": "575b5771-a774-4cbf-8940-d25af9a4c17b",
+      "chatTitle": "quick-html-sharing"
+    },
+    {
+      "chatId": "65a31e97-417c-457f-a48e-c3e31f3f1469",
+      "chatTitle": "list my qhs htmls"
+    }
+  ]
+}
