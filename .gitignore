@@ -15,3 +15,11 @@ playwright/.cache/
 *.log
 .vscode/
 .idea/
+
+# Agent tooling scratch. Local machine state, not project source — and the
+# browse logs capture whole request/response bodies from QA runs against
+# production, which means real `#edit=` tokens. `*.log` above already caught
+# two of the three files; browse-audit.jsonl is why the directory still showed
+# up as untracked.
+.gstack/
+.claude/
