@@ -52,7 +52,7 @@ Nine tools that show up in your agent's tool list:
 | `qhs_edit` | Update HTML at an existing share (slug stays the same) — keeps the old version |
 | `qhs_delete` | Permanently take down a share (URL returns 404 after) |
 | `qhs_stats` | Views, unique viewers, traffic sources, 7-day activity, crawler fetches |
-| `qhs_list` | List shares created from this machine |
+| `qhs_list` | List your shares — this machine, plus every machine once a sync code is saved |
 | `qhs_versions` | List the stored versions of a share, newest first |
 | `qhs_preview_version` | Read an old version's source before restoring it |
 | `qhs_restore` | Republish an older version (appended as a new version, so it's undoable) |
@@ -80,6 +80,8 @@ your agent           quick-html-share-mcp                hosted qhs worker
 ```
 
 Edit tokens are persisted to `~/.qhs/shares.json` so `qhs_edit` / `qhs_delete` can find them on subsequent calls without you having to remember anything. The companion Claude Code skill writes to the same file.
+
+**Across machines.** Save your sync code once per machine with `qhs_set_sync_code` and the rest follow: `qhs_list` includes shares made elsewhere, and `qhs_versions` / `qhs_preview_version` / `qhs_restore` / `qhs_delete` work on them. Editing does not — that still needs the share's own edit token on this device, because a restore republishes bytes the server already holds while an edit supplies new ones. Deleting a share this machine did not create requires `confirm: true`, since a slug alone is otherwise enough to take a page down for good.
 
 ## Privacy & limits
 

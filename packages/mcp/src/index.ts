@@ -16,10 +16,12 @@ import {
   editHtml,
   getStats,
   getVersionSource,
+  listMyShares,
   listVersions,
   restoreVersion,
   uploadHtml,
 } from './client.js';
+import { mergeShareList, resolveDeleteAuth } from './shares.js';
 import {
   STORAGE_PATH,
   findShare,
@@ -156,33 +158,58 @@ server.tool(
   [
     'Permanently delete a previously shared HTML. After this, the share URL returns',
     "404. Use when the user says 'delete my share', 'take that page down',",
-    "'remove the demo I posted'. Requires an edit token (same as qhs_edit).",
+    "'remove the demo I posted'. Uses this machine's stored edit token when it",
+    'has one; otherwise falls back to the saved sync code, which can delete a',
+    'share created on another machine — that path requires confirm: true.',
     '',
     'Idempotent: re-deleting an already-deleted slug returns ok.',
   ].join(' '),
   {
     slug: z.string().regex(/^[a-z0-9]{8,16}$/),
     editToken: z.string().optional(),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe(
+        'Set true only after the user has confirmed deleting this specific slug. ' +
+          'Required when no edit token for it exists on this machine.',
+      ),
   },
-  async ({ slug, editToken }) => {
-    const token = editToken ?? (await findShare(slug))?.editToken;
-    if (!token) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text',
-            text:
-              `No edit token found for slug "${slug}". Ask the user to paste the ` +
-              `edit URL and pass editToken explicitly.`,
-          },
-        ],
-      };
+  async ({ slug, editToken, confirm }) => {
+    const auth = resolveDeleteAuth({
+      explicitToken: editToken,
+      storedToken: (await findShare(slug))?.editToken,
+      syncKey: await loadSyncKey(),
+      confirm,
+    });
+
+    if (!auth.ok) {
+      // The two refusals are different in kind: one has nothing to delete with,
+      // the other has the means but not the mandate. Deleting is not undoable,
+      // and reaching a share by sync code means a bare slug is enough — so the
+      // confirmation is the only thing standing between a slug mentioned in
+      // passing and a page that stops existing.
+      const text =
+        auth.reason === 'no-credential'
+          ? [
+              `No credential for "${slug}" on this machine. Either pass editToken`,
+              '(the part of the edit URL after #edit=), or save the user’s sync',
+              'code with qhs_set_sync_code.',
+            ].join(' ')
+          : [
+              `"${slug}" was not created on this machine, so deleting it would use`,
+              'the saved sync code. Deletion is permanent and cannot be undone.',
+              `Confirm with the user that they mean https://s.qhs.fyi/${slug},`,
+              'then call again with confirm: true.',
+            ].join(' ');
+      return { isError: true, content: [{ type: 'text', text }] };
     }
-    await deleteShare(slug, token);
+
+    await deleteShare(slug, auth.creds);
     await forgetShare(slug);
+    const how = auth.viaSyncKey ? ' (authorized by your sync code)' : '';
     return {
-      content: [{ type: 'text', text: `Deleted ${slug}. The share URL now returns 404.` }],
+      content: [{ type: 'text', text: `Deleted ${slug}${how}. The share URL now returns 404.` }],
     };
   },
 );
@@ -418,23 +445,62 @@ server.tool(
 server.tool(
   'qhs_list',
   [
-    'List shares this machine has created via qhs_share or the companion skill.',
-    "Use when the user asks 'what have I shared', 'list my shares', 'show recent",
-    "links'. Returns slug + shareUrl + createdAt + optional title from local",
-    'storage only (~/.qhs/shares.json). Does NOT include shares created from other',
-    'machines.',
+    "List the user's shares. Use when they ask 'what have I shared', 'list my",
+    "shares', 'show recent links'. Covers shares created on this machine, plus —",
+    'if a sync code is saved — every share created on their other machines.',
+    'Titles only exist for shares created here.',
   ].join(' '),
   {},
   async () => {
-    const shares = await listShares();
-    if (shares.length === 0) {
-      return { content: [{ type: 'text', text: 'No shares stored on this machine yet.' }] };
+    const local = await listShares();
+    const syncKey = await loadSyncKey();
+
+    let remote: Awaited<ReturnType<typeof listMyShares>> = { shares: [], truncated: false };
+    let remoteError: string | null = null;
+    if (syncKey) {
+      // A dead network or a revoked sync code must not turn "here are your
+      // shares" into an error: the local list is still perfectly good and is
+      // what this tool returned before it could ask the server at all.
+      try {
+        remote = await listMyShares(syncKey);
+      } catch (err) {
+        remoteError = err instanceof Error ? err.message : String(err);
+      }
     }
+
+    const shares = mergeShareList(remote.shares, local);
+    if (shares.length === 0) {
+      const hint = syncKey
+        ? 'No shares yet — not on this machine, and none under your sync code.'
+        : 'No shares stored on this machine yet. If you have shares from another ' +
+          'machine, save your sync code with qhs_set_sync_code to see them here.';
+      return { content: [{ type: 'text', text: hint }] };
+    }
+
     const lines = shares.map((s, i) => {
       const label = s.title ? ` — ${s.title}` : '';
-      return `${i + 1}. ${s.slug}${label}\n   ${s.shareUrl}\n   created ${s.createdAt}`;
+      // Marked because the difference is operational, not cosmetic: editing
+      // needs the edit token, which only the local ones have.
+      const where = s.local ? '' : '  [another machine — restore/delete only]';
+      return `${i + 1}. ${s.slug}${label}${where}\n   ${s.shareUrl}\n   created ${s.createdAt}`;
     });
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
+
+    const notes: string[] = [];
+    if (!syncKey && local.length > 0) {
+      notes.push(
+        'This machine only. Save your sync code with qhs_set_sync_code to include ' +
+          'shares created elsewhere.',
+      );
+    }
+    if (remote.truncated) {
+      notes.push(`Showing the newest ${remote.shares.length} synced shares; there are more.`);
+    }
+    if (remoteError) {
+      notes.push(`Local list only — could not reach the server: ${remoteError}`);
+    }
+
+    const text = notes.length > 0 ? `${lines.join('\n')}\n\n${notes.join('\n')}` : lines.join('\n');
+    return { content: [{ type: 'text', text }] };
   },
 );
 

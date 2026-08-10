@@ -8,7 +8,7 @@
 const DEFAULT_ENDPOINT = 'https://api.qhs.fyi';
 const ENDPOINT = process.env.QHS_ENDPOINT ?? DEFAULT_ENDPOINT;
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const USER_AGENT = `qhs-mcp/${VERSION}`;
 
 export interface UploadResult {
@@ -92,12 +92,55 @@ export function editHtml(
   });
 }
 
-export function deleteShare(slug: string, editToken: string): Promise<{ slug: string; ok: true }> {
+/**
+ * Accepts either credential, same as the version endpoints. The server has
+ * always taken a sync-key bearer here (`authorizeShareOwnership`); this client
+ * used to send only an edit token, which made deleting a share created on
+ * another machine impossible from the agent even though the API allowed it.
+ */
+export function deleteShare(
+  slug: string,
+  creds: ShareCredentials,
+): Promise<{ slug: string; ok: true }> {
   return call('/api/share/' + encodeURIComponent(slug), {
     method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ editToken }),
+    ...credentialPayload(creds),
   });
+}
+
+export interface MyShareItem {
+  slug: string;
+  createdAt: string;
+  shareUrl: string;
+}
+
+/**
+ * Every share enrolled under this sync key, newest first.
+ *
+ * Paginated on the server (seek on `(created_at, slug)`), so this follows the
+ * cursor rather than assuming one page. `maxPages` is a stop, not a limit we
+ * expect to hit — but a caller that silently returned the first 100 of 400
+ * shares would look exactly like a caller that returned all 100 of them, so
+ * the truncation is reported instead of swallowed.
+ */
+export async function listMyShares(
+  syncKey: string,
+  maxPages = 5,
+): Promise<{ shares: MyShareItem[]; truncated: boolean }> {
+  const shares: MyShareItem[] = [];
+  let cursor: string | null = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    const query: string = `?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const res: { shares: MyShareItem[]; nextCursor: string | null } = await call(
+      `/api/my-shares${query}`,
+      { method: 'GET', headers: { Authorization: `Bearer ${syncKey}` } },
+    );
+    shares.push(...res.shares);
+    if (!res.nextCursor) return { shares, truncated: false };
+    cursor = res.nextCursor;
+  }
+  return { shares, truncated: true };
 }
 
 export function getStats(slug: string): Promise<StatsResult> {
@@ -124,29 +167,37 @@ export interface RestoreResult {
   newVersion: number;
 }
 
-/**
- * Version endpoints accept either credential. Exactly one is sent: a sync key
- * in the Authorization header, or an edit token in the body. Never both — the
- * server treats the bearer as authoritative and ignores a body token, so
- * sending both would hide which one actually authorized the call.
- *
- * These are POST, not GET, because an edit token may only travel in a body:
- * URL paths and query strings end up in server logs.
- */
-export type VersionCredentials = { editToken: string } | { syncKey: string };
+/** Either credential authorizes a share operation; `deleteShare` takes one too. */
+export type ShareCredentials = { editToken: string } | { syncKey: string };
+/** Historic name, kept so the version helpers below still read as they did. */
+export type VersionCredentials = ShareCredentials;
 
-function credentialInit(creds: VersionCredentials): RequestInit {
+/**
+ * Exactly one credential goes on the wire: a sync key in the Authorization
+ * header, or an edit token in the body. Never both — the server treats the
+ * bearer as authoritative and ignores a body token, so sending both would hide
+ * which one actually authorized the call.
+ *
+ * The edit token travels in a body and never in a path or query string, which
+ * is what forces the version endpoints to be POST: URLs end up in server logs.
+ */
+function credentialPayload(creds: ShareCredentials): {
+  headers: Record<string, string>;
+  body: string;
+} {
   return 'syncKey' in creds
     ? {
-        method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.syncKey}` },
         body: '{}',
       }
     : {
-        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ editToken: creds.editToken }),
       };
+}
+
+function credentialInit(creds: ShareCredentials): RequestInit {
+  return { method: 'POST', ...credentialPayload(creds) };
 }
 
 export function listVersions(slug: string, creds: VersionCredentials): Promise<VersionListResult> {

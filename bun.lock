@@ -38,7 +38,7 @@
     },
     "packages/mcp": {
       "name": "quick-html-share-mcp",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "bin": {
         "quick-html-share-mcp": "./dist/index.js",
       },
@@ -49,6 +49,7 @@
       "devDependencies": {
         "@types/node": "^22.10.0",
         "typescript": "^5.7.0",
+        "vitest": "^4.1.0",
       },
     },
     "packages/shared": {
