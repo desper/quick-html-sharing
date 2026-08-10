@@ -66,10 +66,22 @@ async function recordView(c: Context<AppEnv>, slug: string) {
     // Classified at write time, not at read time: the UA is only meaningful
     // here, and a stored flag keeps the stats query a plain indexed filter.
     const isBot = isBotUserAgent(ua) ? 1 : 0;
+    // Cloudflare resolves this per request, so there is no GeoIP lookup and no
+    // third party. It also has to be captured here or not at all: the only
+    // other field that could infer location is the IP, and that is stored as a
+    // salted one-way hash.
+    //
+    // Both are optional on purpose. CF often resolves a country but not a city
+    // (VPN, corporate egress, mobile carrier), and an absent value must stay
+    // NULL — "unknown" is a real answer and guessing would be worse than none.
+    const cf = c.req.raw.cf;
+    const country = typeof cf?.country === 'string' ? cf.country : null;
+    const city = typeof cf?.city === 'string' ? cf.city : null;
     await c.env.DB.prepare(
-      `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot, country, city)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-      .bind(slug, now, ipHash, ua, referrer, isBot)
+      .bind(slug, now, ipHash, ua, referrer, isBot, country, city)
       .run();
   } catch {
     // View tracking is best-effort. Failing here must not break HTML delivery.

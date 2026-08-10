@@ -126,10 +126,12 @@ editRoute.delete('/share/:slug', syncKeyOptional, async (c) => {
     .bind(now, slug)
     .run();
   // Deleting a share is an explicit "I'm done with this" — don't sit on its
-  // viewers' user agents and referrers for the rest of the retention window.
+  // viewers' user agents, referrers or locations for the rest of the window.
   // The rows stay (the share row is a permanent tombstone so the slug is never
   // reused, and its stats stay readable), but the free-text fields go now.
-  await c.env.DB.prepare(`UPDATE views SET ua = NULL, referrer = NULL WHERE slug = ?`)
+  await c.env.DB.prepare(
+    `UPDATE views SET ua = NULL, referrer = NULL, country = NULL, city = NULL WHERE slug = ?`,
+  )
     .bind(slug)
     .run();
   // R2 delete is best-effort: D1 says "deleted", that's the truth, R2 is just

@@ -76,9 +76,13 @@ Ask the user first, and name the URL you are about to take down. Holding a share
 QHS=$(ls -1 ~/.claude/skills/qhs/scripts/qhs.mjs ~/.claude/skills/qhs/skills/qhs/scripts/qhs.mjs 2>/dev/null | head -1) && node "$QHS" stats <slug>
 ```
 
-Returns `{views, uniqueViewers, botViews, lastViewedAt, createdAt, referrers, dailyViews, deleted}`. No edit token needed — anyone with the slug can read stats (matches the product's "link is the secret" model).
+Returns `{views, uniqueViewers, botViews, lastViewedAt, createdAt, referrers, locations, dailyViews, deleted}`. No edit token needed — anyone with the slug can read stats (matches the product's "link is the secret" model).
 
 `uniqueViewers` counts distinct (salted, hashed) viewer IPs, so it is always `<= views` and is an approximation — shared office NAT undercounts, a viewer on mobile data can overcount. `referrers` is a list of `{source, views}` sorted by views, where `source` is the linking site's hostname, `direct` (no referrer — typed URL, bookmark, most chat apps), or `other` (unparseable referrers plus the long tail beyond the top 5).
+
+`locations` is a list of `{country, city, label, views}` sorted by views. Cloudflare resolves it per request, so there is no tracking script and no third party — but it also means a value is only as good as CF's confidence: `city` is frequently null even when `country` is not (VPN, corporate egress, mobile carrier), and both are null for a viewer it cannot place. Use `label` when showing it to the user; it already renders those cases as `Taipei, TW`, `TW`, `unknown`, or `other`.
+
+**Say what it is when you report it.** "3 viewers in Taipei" sounds more certain than the data is — it is where the network egress appeared to be, not where a person was. And like `ua`/`referrer`, location is nulled after 90 days, so an old share's breakdown covers fewer views than its total.
 
 `dailyViews` is 30 entries of `{date, views}` (UTC, oldest first, zero-view days included) — sum the last 7 to answer "is it still getting traffic", which the lifetime total can't.
 

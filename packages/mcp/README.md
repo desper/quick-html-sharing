@@ -51,7 +51,7 @@ Nine tools that show up in your agent's tool list:
 | `qhs_share` | Upload an HTML document or snippet, get back a public shareable URL + private edit URL |
 | `qhs_edit` | Update HTML at an existing share (slug stays the same) — keeps the old version |
 | `qhs_delete` | Permanently take down a share (URL returns 404 after) |
-| `qhs_stats` | Views, unique viewers, traffic sources, 7-day activity, crawler fetches |
+| `qhs_stats` | Views, unique viewers, traffic sources, viewer locations, 7-day activity, crawler fetches |
 | `qhs_list` | List your shares — this machine, plus every machine once a sync code is saved |
 | `qhs_versions` | List the stored versions of a share, newest first |
 | `qhs_preview_version` | Read an old version's source before restoring it |
@@ -88,6 +88,7 @@ Edit tokens are persisted to `~/.qhs/shares.json` so `qhs_edit` / `qhs_delete` c
 - **Share URLs are unguessable but not authenticated.** ~62 bits of entropy. Treat them like Google Docs share links — anyone with the link can view.
 - **Edit tokens live in the URL fragment** (`#edit=…`), so they never reach the server's HTTP logs.
 - **Max 1 MB per upload, 1 share per 30s per IP** (rate limited).
+- **Viewers are counted, not tracked.** No JavaScript is injected into your HTML. Each view records a salted hash of the IP (never the IP), the user agent, the referring hostname, and the country/city Cloudflare resolves for the request. The last three expire automatically after 90 days; the hash stays so view counts don't shrink retroactively.
 - **No accounts, no email.** Your shares are tied to your local edit-token file — back it up if you care about being able to edit/delete later.
 - A small `Hosted by qhs · Report` watermark is injected into every share for abuse handling.
 

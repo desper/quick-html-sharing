@@ -35,10 +35,17 @@ async function insertPendingShare(slug: string, createdAt: number) {
 
 async function insertView(
   slug: string,
-  opts: { at: number; ua?: string | null; referrer?: string | null },
+  opts: {
+    at: number;
+    ua?: string | null;
+    referrer?: string | null;
+    country?: string | null;
+    city?: string | null;
+  },
 ) {
   await env.DB.prepare(
-    `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot) VALUES (?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO views (slug, viewed_at, ip_hash, ua, referrer, is_bot, country, city)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
   )
     .bind(
       slug,
@@ -46,22 +53,36 @@ async function insertView(
       'viewer-hash',
       opts.ua ?? 'Mozilla/5.0',
       opts.referrer ?? 'https://x.test/',
+      opts.country === undefined ? 'TW' : opts.country,
+      opts.city === undefined ? 'Taipei' : opts.city,
     )
     .run();
 }
 
 describe('anonymizeOldViews', () => {
-  it('strips ua and referrer past the retention window', async () => {
+  it('strips every raw viewer field past the retention window', async () => {
     const slug = await createShare();
     await insertView(slug, { at: OUTSIDE_WINDOW });
 
     expect(await anonymizeOldViews(env)).toBe(1);
 
-    const row = await env.DB.prepare(`SELECT ua, referrer, ip_hash FROM views WHERE slug = ?`)
+    const row = await env.DB.prepare(
+      `SELECT ua, referrer, country, city, ip_hash FROM views WHERE slug = ?`,
+    )
       .bind(slug)
-      .first<{ ua: string | null; referrer: string | null; ip_hash: string }>();
+      .first<{
+        ua: string | null;
+        referrer: string | null;
+        country: string | null;
+        city: string | null;
+        ip_hash: string;
+      }>();
     expect(row?.ua).toBeNull();
     expect(row?.referrer).toBeNull();
+    // Location expires on the same clock. It is at least as identifying as a
+    // user agent, so exempting it would be backwards.
+    expect(row?.country).toBeNull();
+    expect(row?.city).toBeNull();
     // The row and its (already hashed) viewer identity survive — deleting it
     // would rewrite the share's historical view count.
     expect(row?.ip_hash).toBe('viewer-hash');
@@ -152,11 +173,20 @@ describe('deleting a share', () => {
     });
     expect(del.status).toBe(200);
 
-    const row = await env.DB.prepare(`SELECT ua, referrer FROM views WHERE slug = ?`)
+    const row = await env.DB.prepare(
+      `SELECT ua, referrer, country, city FROM views WHERE slug = ?`,
+    )
       .bind(slug)
-      .first<{ ua: string | null; referrer: string | null }>();
+      .first<{
+        ua: string | null;
+        referrer: string | null;
+        country: string | null;
+        city: string | null;
+      }>();
     expect(row?.ua).toBeNull();
     expect(row?.referrer).toBeNull();
+    expect(row?.country).toBeNull();
+    expect(row?.city).toBeNull();
 
     const stats = (await (await dashboardFetch(`/api/share/${slug}/stats`)).json()) as {
       views: number;

@@ -8,7 +8,16 @@
 const DEFAULT_ENDPOINT = 'https://api.qhs.fyi';
 const ENDPOINT = process.env.QHS_ENDPOINT ?? DEFAULT_ENDPOINT;
 
-const VERSION = '0.4.0';
+/**
+ * Single source of truth for the package version at runtime.
+ *
+ * It used to live in three places — package.json, this constant, and the
+ * McpServer handshake — and only two of them ever got bumped, so every client
+ * that asked the server who it was got told 0.2.3 for two releases running.
+ * Exported so the handshake reads the same constant the User-Agent does; only
+ * package.json still has to be updated by hand, and that one is the release.
+ */
+export const VERSION = '0.4.0';
 const USER_AGENT = `qhs-mcp/${VERSION}`;
 
 export interface UploadResult {
@@ -30,6 +39,16 @@ export interface DailyViewStat {
   views: number;
 }
 
+export interface LocationStat {
+  /** ISO 3166-1 alpha-2 as resolved by Cloudflare, or null. */
+  country: string | null;
+  /** Often null even when country is not — CF only resolves it when confident. */
+  city: string | null;
+  /** Server-built display string: 'Taipei, TW', 'TW', 'unknown', or 'other'. */
+  label: string;
+  views: number;
+}
+
 export interface StatsResult {
   slug: string;
   createdAt: string;
@@ -39,6 +58,8 @@ export interface StatsResult {
   botViews: number;
   lastViewedAt: string | null;
   referrers: ReferrerStat[];
+  /** Viewer locations, descending by views, with an 'other' tail. */
+  locations: LocationStat[];
   /** Human views per UTC day for the last 30 days, oldest first. */
   dailyViews: DailyViewStat[];
   deleted: boolean;
