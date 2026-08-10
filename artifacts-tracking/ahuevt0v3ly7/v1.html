@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGENTS.md</title>
+<style>
+:root{--bg:#ffffff;--surface:#f7f7f8;--fg:#1a1a1a;--fg2:#6b7280;--border:#e5e7eb;--accent:#2563eb}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#1a1a1a;--surface:#242424;--fg:#e8e8e8;--fg2:#9a9a9a;--border:#333;--accent:#60a5fa}
+}
+*{box-sizing:border-box}
+body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--fg);
+  font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif}
+main{max-width:860px;margin:0 auto}
+h1,h2,h3,h4{line-height:1.3;margin:1.8em 0 .6em}
+h1{font-size:26px;margin-top:0}h2{font-size:21px}h3{font-size:17px}
+p,ul,ol,blockquote{margin:0 0 1em}
+a{color:var(--accent)}
+code{font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,"PingFang TC",monospace;
+  background:var(--surface);padding:1px 5px;border-radius:4px}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:14px 16px;overflow:auto}
+pre code{background:none;padding:0}
+/* shiki 的兩套主題共存：預設用 light，暗色時切到 --shiki-dark */
+@media (prefers-color-scheme: dark){
+  .shiki,.shiki span{color:var(--shiki-dark)!important;background:var(--shiki-dark-bg)!important}
+}
+blockquote{border-left:3px solid var(--border);padding-left:14px;color:var(--fg2)}
+table{border-collapse:collapse;width:100%;font-size:13px;display:block;overflow:auto}
+th,td{border:1px solid var(--border);padding:6px 10px;text-align:left;white-space:nowrap}
+th{background:var(--surface);position:sticky;top:0}
+tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface) 55%,transparent)}
+img{max-width:100%;height:auto;border-radius:8px}
+hr{border:0;border-top:1px solid var(--border);margin:2em 0}
+.meta{color:var(--fg2);font-size:12px;margin-top:12px}
+.empty{color:var(--fg2)}
+figure{margin:0}
+figcaption{color:var(--fg2);font-size:12px;margin-top:8px;text-align:center}
+</style>
+</head>
+<body><main>
+<h1>Project: quick-html-sharing</h1>
+<p>Indie SaaS — instant HTML sharing for vibe coders. Unguessable URLs + viewer analytics.</p>
+<h2>Stack (locked by /plan-eng-review)</h2>
+<ul>
+<li>Frontend: Astro + minimal islands, deployed to Cloudflare Pages</li>
+<li>API + share renderer: Cloudflare Workers + Hono router</li>
+<li>HTML storage: Cloudflare R2 (egress free)</li>
+<li>Metadata + view events: Cloudflare D1 (SQL)</li>
+<li>Lint/format: Biome (single tool replaces ESLint+Prettier)</li>
+<li>Tests: Vitest + <code>@cloudflare/vitest-pool-workers</code> for Worker, Playwright for E2E</li>
+<li>Package manager: bun (workspaces)</li>
+</ul>
+<h2>Subdomain layout (security-critical)</h2>
+<p>Two distinct origins, regardless of how they're hosted:</p>
+<ul>
+<li><strong>Dashboard origin</strong> — Astro static site (sender uses URL-fragment edit tokens)</li>
+<li><strong>Share origin</strong> — uploaded HTML rendered here, isolated from dashboard cookies</li>
+</ul>
+<p>User-uploaded HTML must NEVER be served from the same origin as the dashboard. This is the core security property — if you change it, phishing pages can attack dashboard cookies.</p>
+<h3>Free deploy mapping (LIVE since 2026-05-28)</h3>
+<ul>
+<li>Dashboard: <strong><a href="https://qhs.fyi">https://qhs.fyi</a></strong> (Cloudflare Pages, static Astro build)
+<ul>
+<li>The <code>-6ft</code> suffix is CF's automatic disambiguator because <code>qhs.pages.dev</code> is
+held by an unrelated company. The suffix goes away after we buy a domain.</li>
+</ul>
+</li>
+<li>API worker: <strong><a href="https://api.qhs.fyi">https://api.qhs.fyi</a></strong> (<code>wrangler deploy --env api</code>)</li>
+<li>Share worker: <strong><a href="https://s.qhs.fyi">https://s.qhs.fyi</a></strong> (<code>wrangler deploy --env share</code>)</li>
+<li>D1: <code>quick-html-sharing</code> (<code>abc8df6d-3fd3-4331-84a1-5974299d6666</code>, APAC region)</li>
+<li>R2 bucket: <code>quick-html-sharing</code></li>
+<li>CF account subdomain: <code>desperli</code> (account id <code>47972744b4002d07fc66280dc5181478</code>)</li>
+</ul>
+<p>The api and share workers run the <strong>same source</strong> but separate deploys give them
+distinct origins, which is what the dispatch logic in <code>src/index.ts</code> keys on.</p>
+<h3>Production mapping (after buying a domain)</h3>
+<p>Collapse to one worker behind two routes:</p>
+<ul>
+<li><code>app.&#x3C;domain>/api/*</code> → dashboard host</li>
+<li><code>s.&#x3C;domain>/*</code> → share host</li>
+</ul>
+<h2>Distribution surfaces (agent integrations)</h2>
+<p>The hosted API is wrapped by two consumer-facing packages so vibe coders can share
+HTML directly from inside their coding agent:</p>
+<ul>
+<li><strong><code>packages/mcp/</code></strong> — <code>quick-html-share-mcp</code> npm package. Stdio MCP server with 5
+tools (<code>qhs_share</code>, <code>qhs_edit</code>, <code>qhs_delete</code>, <code>qhs_stats</code>, <code>qhs_list</code>). Works with
+Claude Desktop, Cursor, Codex CLI, Continue, or any MCP client.</li>
+<li><strong><code>packages/skill/</code></strong> — Claude Code skill (<code>SKILL.md</code> + standalone Node helper at
+<code>scripts/qhs.mjs</code>). User-scope install: <code>ln -s $(pwd)/packages/skill ~/.claude/skills/qhs</code>.</li>
+</ul>
+<p>Both share the same local edit-token store at <code>~/.qhs/shares.json</code> (mirrors the
+web "Recent on this device" pattern). <strong>Endpoint is hardcoded</strong> to the hosted
+worker — <code>QHS_ENDPOINT</code> env var exists only for internal dev/test and must NOT be
+documented for end users (it would let them self-host and undercut monetization).</p>
+<h2>Architecture decisions (DO NOT change without re-running /plan-eng-review)</h2>
+<ol>
+<li><strong>Edit auth via URL fragment (<code>#edit=token</code>)</strong>, NEVER URL path or query string. Fragments don't go to server logs.</li>
+<li><strong>Upload uses D1-first transactional pattern</strong>: insert <code>pending</code> row → write R2 → update to <code>committed</code>. A cleanup job sweeps stale <code>pending</code> rows older than 5 min. This avoids R2 orphans on partial failures.</li>
+<li><strong>Report endpoint dedupes</strong> via D1 unique constraint <code>(slug, reporter_ip_hash)</code>. Without this the abuse endpoint is itself abusable.</li>
+<li><strong>No JS injection into user HTML.</strong> v1 only counts page views server-side. View duration tracking is a v2 opt-in feature.</li>
+<li><strong>Workers Paid plan ($5/mo) recommended</strong> — free tier 10ms CPU/req is too tight given R2 read + D1 INSERT on every share view.</li>
+</ol>
+<h2>Routing rules</h2>
+<ul>
+<li>Bugs / errors / "why is this broken" → invoke /investigate</li>
+<li>Code review / pre-PR → invoke /review</li>
+<li>Ship / deploy / push → invoke /ship</li>
+<li>Test the site / find bugs → invoke /qa</li>
+<li>Visual polish on live UI → invoke /design-review</li>
+<li>Design review on plan stage → invoke /plan-design-review</li>
+<li>Architecture review → invoke /plan-eng-review</li>
+<li>Save progress → invoke /context-save</li>
+</ul>
+<h2>Skill routing</h2>
+<p>When the user's request matches an available skill, ALWAYS invoke it using the Skill tool as the FIRST action.</p>
+<h2>Testing</h2>
+<pre><code class="language-bash">bun run test                          # run all tests
+bun run --filter @qhs/worker test     # worker tests only
+</code></pre>
+<h2>Prompt/LLM changes</h2>
+<p>This project does not use LLMs in production code. If we add LLM integration later, document eval suites here.</p>
+</main></body>
+</html>
