@@ -80,6 +80,28 @@
 
 ## Completed
 
+### Viewer location：country 與 city（2026-08-10）
+
+`views` 加 `country` / `city`，值取自 Cloudflare 每個請求已經解好的 `request.cf` —— 沒有 GeoIP 查詢、沒有第三方、沒有額外延遲。
+
+**無法回填。** 唯一能推出位置的欄位是 IP，而那存的是加鹽單向雜湊，所以 0006 之前的 2400 筆瀏覽永遠沒有位置。上線那一刻就是資料的分水嶺。
+
+隱私邊界刻意跟 `ua`/`referrer` 對齊：位置至少一樣可識別個人，所以四個欄位在 90 天時被同一條 UPDATE 一起清空，刪除 share 時也一起立刻清。過程中發現 0004 的 partial index 只認得 ua/referrer —— 一筆「沒有 User-Agent 但有城市」的瀏覽會落在索引外、永遠掃不到，0006 一併重建。
+
+`label`（`Taipei, TW` / `TW` / `unknown` / `other`）在伺服器端算好，三個 surface 才不會對同一列漂出三種渲染；「解出國家但沒解出城市」這個常見情況的規則也只需要決定一次。
+
+測試方式是 referrer bug 的直接產物：第一條測試注入 `request.cf` 走**真實 renderer** 再從 stats 讀回來，因為寫入端和讀取端各自對自己的格式是對的、卻可能彼此不一致，而分開測抓不到。
+
+### MCP / skill 跨裝置補完（2026-08-10）
+
+`qhs_list` 只讀本地 store、`qhs_delete` 沒有本機 editToken 就放棄 —— 兩個都不是伺服器的限制，`/api/my-shares` 一直都在，DELETE 也一直吃 sync key bearer。是 client 從來沒去問。
+
+列表改成**聯集而非取代**：sync code 存檔之前建立的 share 伺服器端 `owner_key_hash` 是 NULL，把遠端當唯一真相會讓工具「弄丟」本來列得出來的東西。
+
+delete 的確認閘門只加在走 sync key 那條 —— 握有 edit token 本身就是「你指的是這一個」的證據，換成 sync code 之後一個裸 slug 就足以刪掉任何機器上的任何 share。在有本機 token 那條加必填確認會打斷今天就能用的呼叫端，換不到安全性。
+
+`packages/mcp` 從零自動測試變成有測試（判斷邏輯抽進 `src/shares.ts` 才測得到 —— `index.ts` 在模組頂層就 connect stdio transport）。npm 發佈到 0.4.0。
+
 ### 版本歷史：edit 不直接覆寫（2026-08-09）
 
 `POST /api/edit/:slug` 不再覆寫 R2，改為附加新版本，加上版本列表 / 原始碼預覽 / 還原三個端點。誤蓋現在救得回來。
