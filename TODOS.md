@@ -14,6 +14,30 @@
 **Priority:** P4
 **Depends on:** 版本歷史出貨後 + CF 平台變化
 
+### retention sweep 改用前驅鏈判斷保留範圍
+
+**What:** 讓 retention sweep 也走 `prev` 前驅鏈，保留「真正提交過的最近 10 版」，並主動收掉不在鏈上的幽靈物件。目前 sweep 是數物件個數，列表與 restore 是走鏈。
+
+**Why:** 兩處對「版本」的定義不完全一致，是刻意的取捨而不是 bug —— 下一個讀 `cleanup.ts` 的人若不知道，會往「修正不一致」的方向改，然後付出走鏈的成本。幽靈物件會佔掉 10 個保留名額裡的位子，若幽靈變常見，使用者能救回的真實版本數會默默少於 10。
+
+**Context:** 2026-08-11 plan-eng-review 的 T1。原本的 sweep 用 `latest_version - RETENTION_VERSIONS + 1` 這個純算術算保留線，版號一跳號就會提早刪掉真實歷史（codex outside voice 抓到）。當時裁定改成「版號降序數第 10 個物件」——零額外 R2 呼叫，用的是 sweep 已經 list 到手的同一份清單。走鏈才是完全正確的答案，但要 50 shares × 10 次 head，每十分鐘一輪，在幽靈罕見的前提下不值得。**觀察點：版本列表筆數是否經常少於該 share 實際的物件數。** 若開始經常少，前提就失效了。
+
+**Effort:** M
+**Priority:** P4
+**Depends on:** T1 出貨 + 實際觀測到幽靈頻率
+
+### 刪除後的完整 stats 實務上取不到
+
+**What:** 釐清「share 刪除後 stats 仍可讀」這個承諾要不要算數，還是只對存過 sync code 的人成立。
+
+**Why:** `routes/edit.ts:130` 寫明刪除只是 tombstone、「它的 stats 保持可讀」，而伺服器確實保留了 `edit_token_hash`。但三個客戶端在刪除成功後都立刻抹掉本機的 edit token 記錄（`edit.astro:105`、MCP `index.ts:211`）。所以一個沒存過 sync code 的 share 被刪除後，授權資料還在伺服器上，卻沒有任何客戶端拿得出鑰匙 —— 文件描述的能力沒有入口。
+
+**Context:** 2026-08-11 plan-eng-review 的 codex outside voice 抓到。D2 把 referrers/locations/uniqueViewers/dailyViews 移到憑證層之後，這句承諾對完整數據來說幾乎沒有實際意義。三種可能的收法：(1) 刪除前提醒使用者可以先看一次完整數據；(2) 刪除時不抹本機 token、只標記已刪；(3) 承認這個承諾只對有 sync code 的人成立，把註解改準。三種各有產品含意 —— 這是「刪除後的數據還值多少」的產品問題，不是工程問題。這也是 `ui-draws-undelivered-api` 那條 learning 的又一次出現：API 有能力，UI 沒入口。
+
+**Effort:** S
+**Priority:** P4
+**Depends on:** D2 出貨
+
 ### D19 跨裝置 edit 限制重新檢視
 
 **What:** 觀察「還原能跨裝置但 edit 不能」這個不對稱是否造成困惑，出現訊號再評估 v2 vault。
